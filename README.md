@@ -54,7 +54,7 @@ hmm-gformula-cvd/
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/hmm-gformula-cvd.git
+git clone https://github.com/kkd2718/hmm-gformula-cvd.git
 cd hmm-gformula-cvd
 pip install -r requirements.txt
 
