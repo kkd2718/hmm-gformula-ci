@@ -14,7 +14,7 @@ We propose a novel causal inference framework integrating **Hidden Markov Models
 ### Key Features
 * **Hidden Markov Modeling (HMM):** Captures unobserved latent health states ($Z_t$) to correct bias in smoking cessation effects.
 * **Parametric g-formula:** Estimates counterfactual cumulative risks under dynamic interventions (e.g., "Quit at age 50").
-* **Real-World Calibration:** Simulation parameters are fine-tuned to reflect Korean gender gaps in smoking rates (Male ~37%, Female ~8%) and CVD incidence (10-year risk 5~10%), including **aging effects**.
+* **Real-World Calibration:** Simulation parameters are fine-tuned to reflect Korean gender gaps in smoking rates (Male -37%, Female -8%) and CVD incidence (10-year risk 5-10%), including **aging effects**.
 * **Gene-Environment Interaction (GxE):** Stratified analysis by Polygenic Risk Score (PRS) to identify optimal intervention timing.
 
 ---
