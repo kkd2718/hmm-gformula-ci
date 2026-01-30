@@ -22,16 +22,16 @@ We propose a novel causal inference framework integrating **Hidden Markov Models
 ## 📂 Repository Structure
 
 ```text
-hmm-gformula-cvd/
-├── config.py                 # Simulation parameters (calibrated to KNHANES/KoGES)
+hmm-gformula-ci/
+├── config.py                 # Simulation parameters (calibrated to KoGES/KNHANES)
 ├── data_generator.py         # Synthetic data generation with aging effects
+├── real_data_adapter.py      # Interface for loading & preprocessing real-world cohorts (KoGES/UKBB)
 ├── main.py                   # Main entry point for basic validation experiments
-├── analysis_advanced.py  # Advanced analysis (Spline curves with 95% CI)
+├── analysis_advanced_prs.py  # Advanced analysis (Spline curves with 95% CI)
 ├── models/
 │   └── hmm_gformula.py       # Core HMM and g-formula logic (PyTorch)
 ├── experiments/
 │   └── run_experiments.py    # Experiment pipelines (Bootstrap CI, Robustness)
-├── real_data_adapter.py      # Adap to real data
 ├── results/                  # Output figures and tables
 ├── requirements.txt          # Python dependencies
 └── README.md
