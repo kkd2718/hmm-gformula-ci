@@ -12,10 +12,10 @@ This repository contains the official implementation of the simulation framework
 We propose a novel causal inference framework integrating **Hidden Markov Models (HMM)** with the **Parametric g-formula** to handle time-varying confounding and unobserved latent health states (e.g., "sick-quitter" effect). The simulation is rigorously calibrated to **long-term epidemiological trends** of the Korean population (2001–2020), utilizing baseline data from **KoGES** and historical trends from **KNHANES**. Unlike static models, this framework reconstructs a **20-year longitudinal history**, capturing the dynamic decline in smoking rates and the cumulative incidence of CVD over two decades.
 
 ### Key Features
-* **Hidden Markov Modeling (HMM):** Captures unobserved latent health states ($Z_t$) to correct bias in smoking cessation effects.
-* **Parametric g-formula:** Estimates counterfactual cumulative risks under dynamic interventions (e.g., "Quit at age 50").
-* **Real-World Calibration:** Simulation parameters are fine-tuned to reflect Korean gender gaps in smoking rates (Male -37%, Female -8%) and CVD incidence (10-year risk 5-10%), including **aging effects**.
-* **Gene-Environment Interaction (GxE):** Stratified analysis by Polygenic Risk Score (PRS) to identify optimal intervention timing.
+* **Hidden Markov Modeling (HMM):** Captures unobserved latent health states ($Z_t$) to correct bias in smoking cessation effects (e.g., separating "sick-quitters" from healthy quitters).
+* **Parametric g-formula:** Estimates counterfactual cumulative risks under dynamic interventions (e.g., "What if everyone quit smoking at age 50?").
+* **Real-World Calibration:** Calibrated to **20-year longitudinal trends** (2001–2020) of the Korean population. The simulation reconstructs the **historical decline** in male smoking rates (Baseline ~49% $\rightarrow$ Ending ~42%) and realistic CVD incidence (**20-year cumulative risk 5–10%**), incorporating aging effects.
+* **Gene-Environment Interaction (GxE):** Stratified analysis by Polygenic Risk Score (PRS) to identify the optimal intervention timing for high-risk individuals.
 
 ---
 
@@ -26,11 +26,12 @@ hmm-gformula-cvd/
 ├── config.py                 # Simulation parameters (calibrated to KNHANES/KoGES)
 ├── data_generator.py         # Synthetic data generation with aging effects
 ├── main.py                   # Main entry point for basic validation experiments
-├── analysis_advanced_prs.py  # Advanced analysis (Spline curves with 95% CI)
+├── analysis_advanced.py  # Advanced analysis (Spline curves with 95% CI)
 ├── models/
 │   └── hmm_gformula.py       # Core HMM and g-formula logic (PyTorch)
 ├── experiments/
 │   └── run_experiments.py    # Experiment pipelines (Bootstrap CI, Robustness)
+├── real_data_adapter.py      # Adap to real data
 ├── results/                  # Output figures and tables
 ├── requirements.txt          # Python dependencies
 └── README.md
