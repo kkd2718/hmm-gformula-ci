@@ -1,0 +1,162 @@
+======================================================================
+Hidden Markovian g-formula Simulation Study v3.1
+Korean Population Calibrated (KNHANES 2023, KDCA 2022)
+======================================================================
+
+======================================================================
+SIMULATION STUDY v3.1: Korean-Calibrated HMM g-formula
+======================================================================
+Monte Carlo simulations: 200
+Sample sizes for Exp2: [5000, 10000, 20000, 50000, 100000]
+Quick mode: False
+
+======================================================================
+EXPERIMENT 1: Effect Size Sensitivity Analysis
+======================================================================
+N simulations: 200, N samples: 20000, Epochs: 200
+
+>>> Processing: Null
+
+>>> Processing: Weak
+
+>>> Processing: Moderate
+
+>>> Processing: Strong
+
+----------------------------------------------------------------------
+Results Summary (beta_GS):
+----------------------------------------------------------------------
+Null: True=0.000, Est=0.069, Bias=0.069, RMSE=0.085
+Weak: True=0.100, Est=0.232, Bias=0.132, RMSE=0.140
+Moderate: True=0.250, Est=0.472, Bias=0.222, RMSE=0.225
+Strong: True=0.400, Est=0.643, Bias=0.243, RMSE=0.245
+
+======================================================================
+EXPERIMENT 2: Sample Size Robustness Analysis
+======================================================================
+N simulations: 200
+Sample sizes: [5000, 10000, 20000, 50000, 100000]
+(Using consistent MC iterations across all sample sizes)
+
+>>> Processing N = 5,000 (epochs=200)
+    Completed in 23.3 minutes
+
+>>> Processing N = 10,000 (epochs=200)
+    Completed in 32.4 minutes
+
+>>> Processing N = 20,000 (epochs=200)
+    Completed in 49.9 minutes
+
+>>> Processing N = 50,000 (epochs=150)
+    Completed in 54.5 minutes
+
+>>> Processing N = 100,000 (epochs=150)
+    Completed in 63.5 minutes
+
+----------------------------------------------------------------------
+Results Summary (beta_GS, True = 0.25)
+----------------------------------------------------------------------
+         N       Mean       Bias       RMSE   Coverage  Time(min)
+----------------------------------------------------------------------
+     5,000     0.4898     0.2398     0.2529       0.00       23.3
+    10,000     0.4740     0.2240     0.2310       0.00       32.4
+    20,000     0.4752     0.2252     0.2288       0.00       49.9
+    50,000     0.4771     0.2271     0.2283       0.00       54.5
+   100,000     0.4776     0.2276     0.2284       0.00       63.5
+
+Results saved to ./results/
+
+======================================================================
+EXPERIMENT 5: Causal Inference with Bootstrap 95% CI
+======================================================================
+N samples: 20,000, N bootstrap: 200, Epochs: 200
+g-formula MC per subject: 1000
+======================================================================
+Data Generation Validation (v3.2 - with Aging Effect)
+======================================================================
+
+[Sample]
+  Total: 20,000, Male: 9,914, Female: 10,086
+
+[Smoking Rate] (Target: M ~37%, F ~8%)
+  Male: 42.1% (avg), t0=49.0%, t9=31.2%
+  Female: 6.4% (avg), t0=9.1%, t9=3.9%
+  → alpha_time 효과: 시간 경과에 따른 흡연율 감소 확인
+
+[CVD Rate] (Target: 10y cumulative 5-10%)
+  Male - Annual: 0.85%, 10y Cumulative: 16.9%
+  Female - Annual: 0.14%, 10y Cumulative: 2.8%
+  Sex Ratio (M/F): 5.98
+  Total CVD Events: 1,961
+======================================================================
+
+Fitting HMM-gFormula model...
+Epoch 50/200, Loss: 0.5850
+Epoch 100/200, Loss: 0.5698
+Epoch 150/200, Loss: 0.5617
+Epoch 200/200, Loss: 0.5574
+
+Estimated parameters:
+  psi: 0.5000
+  gamma_S: 0.1000
+  gamma_G: 0.1000
+  sigma_Z: 0.0442
+  beta_0: -6.3406
+  beta_Z: 1.5079
+  beta_S: -0.2064
+  beta_G: 0.1812
+  alpha_0: -2.0000
+  alpha_S: 1.5000
+
+--------------------------------------------------
+1. Causal Effect Estimation (Bootstrap CI)
+--------------------------------------------------
+
+Results:
+
+  Risk (Never Smoke):
+    Mean: 5.50%
+    95% CI: [5.45%, 5.56%]
+
+  Risk (Always Smoke):
+    Mean: 32.47%
+    95% CI: [32.13%, 32.80%]
+
+  Risk Difference (Smoke - No Smoke):
+    Mean: 26.97%
+    95% CI: [26.67%, 27.25%]
+
+  Risk Ratio (Smoke / No Smoke):
+    Mean: 5.90
+    95% CI: [5.88, 5.92]
+
+--------------------------------------------------
+2. PRS-Stratified Analysis (High vs Low Risk)
+--------------------------------------------------
+
+Risk Ratio (Smoke vs No Smoke) by PRS Group:
+
+  High Risk (PRS top 20%):
+    RR Mean: 6.59
+    95% CI: [6.55, 6.63]
+
+  Low Risk (PRS bottom 80%):
+    RR Mean: 5.46
+    95% CI: [5.43, 5.47]
+
+--------------------------------------------------
+3. Effect of Quit Timing
+--------------------------------------------------
+
+Risk Ratio (Quit at Year t vs Always Smoke):
+  Quit at Year 0: RR = 0.169 (95% CI: [0.169, 0.170])
+  Quit at Year 2: RR = 0.179 (95% CI: [0.178, 0.179])
+  Quit at Year 4: RR = 0.189 (95% CI: [0.189, 0.190])
+  Quit at Year 6: RR = 0.199 (95% CI: [0.198, 0.200])
+  Quit at Year 8: RR = 0.208 (95% CI: [0.207, 0.208])
+
+Results saved to ./results/
+
+======================================================================
+ALL EXPERIMENTS COMPLETED
+======================================================================
