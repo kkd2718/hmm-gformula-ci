@@ -91,10 +91,23 @@ python analysis_advanced_prs.py
 
 ## 📊 Visualization Outputs
 
-| **Figure A. PRS Effect Modification** | **Figure B. Urgency of Cessation** |
-| --- | --- |
-| Demonstrates the varying risk ratios across the continuous PRS spectrum. | Shows the diminishing returns of delayed smoking cessation. |
-| *(Generated via analysis_advanced_prs.py)* | *(Generated via analysis_advanced_prs.py)* |
+The simulation results demonstrate strong **Gene-Environment Interaction** and the critical importance of **early intervention**.
+
+### **Figure A. Synergistic Effect of PRS and Smoking**
+> **"High genetic risk amplifies the harm of smoking."**
+
+![Figure A: PRS Effect Modification](./results/curve_a_prs_effect_95ci.png)
+
+* **Interpretation:** The Risk Ratio (RR) of smoking increases sharply as the Polygenic Risk Score (PRS) increases. This "fanning out" pattern indicates a **synergistic interaction**, meaning high-risk individuals suffer disproportionately more from smoking compared to low-risk individuals.
+
+<br>
+
+### **Figure B. Urgency of Cessation (Timing Effect)**
+> **"Every year of delay matters."**
+
+![Figure B: Quit Timing Effect](./results/curve_b_quit_timing_95ci.png)
+
+* **Interpretation:** Delaying smoking cessation shows a **linear increase** in CVD risk ratio. There is no "safe window" for delay; the simulation confirms that **quitting immediately** yields the greatest preventive benefit compared to postponing even by a single year.
 
 ---
 
