@@ -1,15 +1,15 @@
 # HMM-based Parametric g-formula for CVD Risk Simulation
 
-**Optimal Timing of Smoking Cessation Stratified by Polygenic Susceptibility: A Causal Inference Simulation Study**
+**Estimating the Causal Effect of Smoking Cessation Stratified by Polygenic Risk: A Simulation Study using Hidden Markov Models.**
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-orange)
 
 ## 📌 Overview
 
-This repository contains the official implementation of the simulation framework used in the Master's Thesis: **"Optimal Timing of Smoking Cessation Based on Polygenic Susceptibility to Cardiovascular Disease."**
+This repository contains the official implementation of the simulation framework used in the Master's Thesis: **"Estimating the Causal Effect of Smoking Cessation Stratified by Polygenic Risk: A Simulation Study using Hidden Markov Models."**
 
-We propose a novel causal inference framework integrating **Hidden Markov Models (HMM)** with the **Parametric g-formula** to handle time-varying confounding and unobserved latent health states (e.g., "sick-quitter" effect). The simulation is rigorously calibrated to real-world epidemiological statistics of the Korean population, utilizing data from **KoGES**, **KNHANES 2023**, and **KDCA 2022**.
+We propose a novel causal inference framework integrating **Hidden Markov Models (HMM)** with the **Parametric g-formula** to handle time-varying confounding and unobserved latent health states (e.g., "sick-quitter" effect). The simulation is rigorously calibrated to **long-term epidemiological trends** of the Korean population (2001–2020), utilizing baseline data from **KoGES** and historical trends from **KNHANES**. Unlike static models, this framework reconstructs a **20-year longitudinal history**, capturing the dynamic decline in smoking rates and the cumulative incidence of CVD over two decades.
 
 ### Key Features
 * **Hidden Markov Modeling (HMM):** Captures unobserved latent health states ($Z_t$) to correct bias in smoking cessation effects.
@@ -54,8 +54,8 @@ hmm-gformula-cvd/
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/kkd2718/hmm-gformula-cvd.git
-cd hmm-gformula-cvd
+git clone https://github.com/kkd2718/hmm-gformula-ci.git
+cd hmm-gformula-ci
 pip install -r requirements.txt
 
 ```
@@ -73,7 +73,7 @@ python main.py --full
 
 ```
 
-### 2. Causal Inference & Clinical Analysis (Figure 3-4)
+### 2. Causal Inference & Clinical Analysis (Figure 1-2)
 
 Run the advanced analysis to generate **Spline Curves with 95% Confidence Intervals (Shaded Area)**. This script analyzes:
 
@@ -81,7 +81,7 @@ Run the advanced analysis to generate **Spline Curves with 95% Confidence Interv
 * **Urgency of Cessation:** How Risk Ratio increases as cessation is delayed.
 
 ```bash
-python analysis_advanced_prs.py
+python main.py --advanced
 
 ```
 
@@ -115,11 +115,16 @@ The simulation results demonstrate strong **Gene-Environment Interaction** and t
 
 You can modify the simulation parameters in `config.py` to adapt to different populations (e.g., UK Biobank settings).
 
-* **`TRUE_PARAMS_EXPOSURE`**: Adjust smoking prevalence, persistence (`alpha_S`), and aging effects (`alpha_time`).
-* **`TRUE_PARAMS_OUTCOME`**: Adjust baseline CVD risk (`beta_0`) and aging risk (`beta_time`).
-* **`TRUE_PARAMS_HIDDEN_STATE`**: Modify the transition dynamics of latent health.
+* **`TRUE_PARAMS_EXPOSURE`**: Controls smoking dynamics.
+    * `alpha_S`: Smoking persistence (addiction).
+    * `alpha_time`: **Time-dependent trend** (reflecting the historical decrease in smoking rates and aging effects).
+* **`TRUE_PARAMS_OUTCOME`**: Controls CVD risk.
+    * `beta_0`: Baseline risk.
+    * `beta_time`: **Aging effect** (yearly increase in CVD risk due to aging).
+* **`TRUE_PARAMS_HIDDEN_STATE`**: Transitions of the latent health state ($Z_t$).
 
-Current settings are calibrated to **2023 Korean Health Statistics**:
+Current settings are calibrated to **KoGES (2001-2020) & KNHANES trends**:
 
-* Male Smoking Rate: ~37% (decreasing with age)
-* CVD Incidence: 10-year cumulative risk ~5-10%
+* **Simulation Period:** 20 years (Long-term follow-up).
+* **Male Smoking Rate:** approx. **49%** (baseline) $\rightarrow$ **42%** (decreasing trend via `alpha_time`).
+* **CVD Incidence:** 20-year cumulative risk **5-10%** (calibrated via `beta_0` & `beta_time`).
