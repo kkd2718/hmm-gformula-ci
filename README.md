@@ -37,17 +37,37 @@ Our validation study confirms that standard methods significantly underestimate 
 * **Insight:** Smoking is disproportionately more dangerous for genetically susceptible individuals.
 
 ### 3. Optimal Timing of Cessation
-*Quantifying the benefit of early intervention.*
+*Quantifying the benefit of early intervention (20-Year Horizon).*
 
 * **Quit at Year 0:** Risk reduces to **0.17x** (vs. Always Smoke).
 * **Quit at Year 12:** Risk reduces to **0.22x**.
-* **Insight:** Early cessation yields significantly higher protective benefits, emphasizing the need for early screening in high-PRS groups.
+* **Insight:** While quitting immediately yields the greatest benefit, **late cessation (Year 12)** still provides substantial protection (78% risk reduction), preventing the compounding effect of smoking on aging.
+
+---
+
+## 📊 Visualization Outputs (Advanced Analysis)
+
+To visualize the non-linear trajectories of risk, we performed **Cubic Spline Interpolation** with 95% Bootstrap Confidence Intervals.
+
+### **Figure A. Synergistic Effect of PRS and Smoking**
+> **"High genetic risk amplifies the harm of smoking."**
+
+![Figure A: PRS Effect Modification](./results/curve_a_prs_effect_95ci.png)
+
+* **Interpretation:** The Risk Ratio (RR) of smoking increases sharply as the Polygenic Risk Score (PRS) increases. This "fanning out" pattern indicates a **synergistic interaction**, meaning high-risk individuals suffer disproportionately more from smoking compared to low-risk individuals.
+
+### **Figure B. Urgency of Cessation (Timing Effect)**
+> **"Every year of delay matters."**
+
+![Figure B: Quit Timing Effect](./results/curve_b_quit_timing_95ci.png)
+
+* **Interpretation:** The risk trajectory shows a steady increase with every year of delay. The cubic spline analysis confirms that **quitting immediately** yields the greatest preventive benefit, but interventions even in the later stages (e.g., Year 12-16) significantly flatten the cumulative risk curve compared to non-cessation.
 
 ---
 
 ## 🛠 Technical Validation (Robustness Checks)
 
-Before drawing clinical conclusions, we rigorously validated the statistical properties of the HMM framework through simulation experiments.
+Before drawing clinical conclusions, we rigorously validated the statistical properties of the HMM framework.
 
 ### Sensitivity Analysis (Experiment 1)
 * **Goal:** Test if the model correctly distinguishes different magnitudes of GxE interaction.
@@ -55,7 +75,7 @@ Before drawing clinical conclusions, we rigorously validated the statistical pro
 * **Conclusion:** The reported synergistic effects are not artifacts but reflect true signal variations.
 
 ### Statistical Consistency (Experiment 2)
-* **Goal:** Evaluate stability across sample sizes ($N=5,000$ to $100,000$).
+* **Goal:** Evaluate stability across sample sizes ($N=5,000$ to $50,000$).
 * **Result:** Standard Error (SE) decreased proportionally to sample size ($1/\sqrt{N}$), confirming the estimator is statistically consistent.
 
 ---
@@ -99,8 +119,29 @@ hmm-gformula-ci/
 ├── models/
 │   └── hmm_gformula.py       # Core HMM and g-formula logic (PyTorch)
 ├── data_generator.py         # Synthetic data generation engine
+├── analysis_advanced_prs.py  # Cubic Spline Visualization Module
 ├── real_data_adapter.py      # Interface for loading KCPS-II / UK Biobank
 └── results/                  # Generated figures and CSV tables
+
+```
+
+## 🚀 Usage
+
+### 1. Run Standard Experiments
+
+To reproduce the bias comparison and main causal effects:
+
+```bash
+python main.py --exp 4 --n-boot 200
+
+```
+
+### 2. Generate Advanced Visualizations
+
+To produce the Cubic Spline curves (Figure A & B) with 95% CI bands:
+
+```bash
+python main.py --advanced
 
 ```
 
