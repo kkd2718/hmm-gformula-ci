@@ -1,6 +1,11 @@
 """
 analysis_advanced_prs.py - Advanced Analysis with 95% CI Shaded Spline Curves
 
+v3.3 Changes:
+- [UPDATE] n_time 기본값 10 → 20 (20년 시뮬레이션)
+- [UPDATE] quit_years 동적 생성 (2년 간격)
+- [UPDATE] x축 범위 데이터 기반 동적 설정
+
 v3.2 Changes:
 - [NEW] Bootstrap CI 음영 처리 (plt.fill_between)
 - [NEW] 상한선/하한선 Spline 보간
@@ -56,7 +61,7 @@ def analyze_prs_effect_with_bootstrap(
     L: torch.Tensor,
     n_prs_points: int = 15,
     n_bootstrap: int = 100,
-    n_time: int = 10,
+    n_time: int = 20,  # 20년 시뮬레이션
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -119,9 +124,9 @@ def analyze_quit_timing_with_bootstrap(
     model: HiddenMarkovGFormula,
     G: torch.Tensor,
     L: torch.Tensor,
-    quit_years: List[int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    quit_years: List[int] = None,  # None이면 n_time 기반으로 자동 생성
     n_bootstrap: int = 100,
-    n_time: int = 10,
+    n_time: int = 20,  # 20년 시뮬레이션
     prs_groups: bool = True,
     prs_percentile: float = 80,
     verbose: bool = True,
@@ -134,6 +139,10 @@ def analyze_quit_timing_with_bootstrap(
     """
     if verbose:
         print("Analyzing quit timing effect with bootstrap CI...")
+    
+    # quit_years 기본값: 2년 간격으로 0부터 n_time까지
+    if quit_years is None:
+        quit_years = list(range(0, n_time + 1, 2))
     
     n_mc = GFORMULA_PARAMS.get('n_monte_carlo', 1000)
     n_samples = G.shape[0]
@@ -348,13 +357,17 @@ def plot_curve_b_quit_timing_with_ci(
     ax.legend(loc='upper left', fontsize=10)
     ax.grid(True, alpha=0.3)
     
-    ax.set_xticks(range(0, 10, 2))
-    ax.set_xticklabels([f'Year {i}' for i in range(0, 10, 2)])
+    # Dynamic x-axis based on data
+    max_year = int(df['quit_year'].max())
+    xticks = list(range(0, max_year + 1, 4))
+    ax.set_xticks(xticks)
+    ax.set_xticklabels([f'Year {i}' for i in xticks])
+    ax.set_xlim(0, max_year)
     
     # Annotation
     ax.annotate(
         'Earlier cessation → Greater benefit',
-        xy=(1.5, df[df['group'] == 'All']['rr_mean'].min() * 1.05),
+        xy=(max_year * 0.15, df[df['group'] == 'All']['rr_mean'].min() * 1.05),
         fontsize=11, style='italic',
         bbox=dict(boxstyle='round,pad=0.5', facecolor='lightgreen', alpha=0.7)
     )
@@ -448,7 +461,7 @@ def plot_combined_figure_with_ci(
 
 def run_advanced_analysis(
     n_samples: int = 20000,
-    n_time: int = 10,
+    n_time: int = 20,  # 20년 시뮬레이션
     n_bootstrap: int = None,
     save_results: bool = True,
     verbose: bool = True,
@@ -490,15 +503,19 @@ def run_advanced_analysis(
         model, data.G, data.L, 
         n_prs_points=12, 
         n_bootstrap=min(n_bootstrap, 80),
+        n_time=n_time,
         verbose=verbose
     )
     
     # Analysis B: Quit Timing with Bootstrap CI
     print("\n[Analysis B] Quit Timing Effect with Bootstrap CI...")
+    # 2년 간격으로 0부터 n_time까지
+    target_quit_years = list(range(0, n_time + 1, 2))
     df_quit = analyze_quit_timing_with_bootstrap(
         model, data.G, data.L,
-        quit_years=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        quit_years=target_quit_years,
         n_bootstrap=min(n_bootstrap, 50),
+        n_time=n_time,
         prs_groups=True,
         verbose=verbose
     )

@@ -1,7 +1,11 @@
 """
-data_generator.py - Data Generating Process (v3.2)
+data_generator.py - Data Generating Process (v3.3)
 
 한국인 코호트 특성 반영 + 시간 효과(Aging) 포함
+
+v3.3 Changes:
+- [UPDATE] validate_dgp: 20년 시뮬레이션 지원 (동적 시점 표시)
+- [UPDATE] stats 키 이름 변경 (t9 → t_last, 10y → n_time 기반)
 
 v3.2 Changes:
 - [NEW] alpha_time: 시간 경과에 따른 흡연 확률 감소
@@ -357,7 +361,9 @@ def generate_intervention_data(
 def validate_dgp(data: SimulatedData, verbose: bool = True) -> Dict:
     """
     생성된 데이터의 통계량 검증 (한국인 역학 통계와 비교)
+    v3.3: 20년 시뮬레이션 지원
     """
+    n_time = data.n_time
     male_mask = data.get_male_mask()
     female_mask = data.get_female_mask()
     
@@ -366,54 +372,58 @@ def validate_dgp(data: SimulatedData, verbose: bool = True) -> Dict:
     female_smoke_rate = data.S[female_mask].mean().item()
     
     # 시점별 흡연율
-    male_smoke_by_time = [data.S[male_mask, t, :].mean().item() for t in range(data.n_time)]
-    female_smoke_by_time = [data.S[female_mask, t, :].mean().item() for t in range(data.n_time)]
+    male_smoke_by_time = [data.S[male_mask, t, :].mean().item() for t in range(n_time)]
+    female_smoke_by_time = [data.S[female_mask, t, :].mean().item() for t in range(n_time)]
     
     # 성별 CVD 발생률
     male_cvd_rate = data.Y[male_mask].mean().item()
     female_cvd_rate = data.Y[female_mask].mean().item()
     
-    # 10년 누적 발생률
+    # 누적 발생률 (전체 기간)
     male_cumulative = 1 - (1 - data.Y[male_mask]).prod(dim=1).mean().item()
     female_cumulative = 1 - (1 - data.Y[female_mask]).prod(dim=1).mean().item()
     
     # 전체 이벤트 수
     total_events = data.Y.sum().item()
     
+    # 중간 시점 (10년 또는 n_time//2)
+    mid_time = min(9, n_time - 1)
+    last_time = n_time - 1
+    
     stats = {
         'n_samples': data.n_samples,
-        'n_time': data.n_time,
+        'n_time': n_time,
         'n_male': male_mask.sum().item(),
         'n_female': female_mask.sum().item(),
         'male_smoke_rate': male_smoke_rate,
         'female_smoke_rate': female_smoke_rate,
         'male_smoke_t0': male_smoke_by_time[0],
-        'male_smoke_t9': male_smoke_by_time[-1],
+        'male_smoke_t_last': male_smoke_by_time[last_time],
         'female_smoke_t0': female_smoke_by_time[0],
-        'female_smoke_t9': female_smoke_by_time[-1],
+        'female_smoke_t_last': female_smoke_by_time[last_time],
         'male_cvd_annual': male_cvd_rate,
         'female_cvd_annual': female_cvd_rate,
-        'male_cvd_cumulative_10y': male_cumulative,
-        'female_cvd_cumulative_10y': female_cumulative,
+        'male_cvd_cumulative': male_cumulative,
+        'female_cvd_cumulative': female_cumulative,
         'cvd_sex_ratio': male_cvd_rate / (female_cvd_rate + 1e-10),
         'total_cvd_events': total_events,
     }
     
     if verbose:
         print("=" * 70)
-        print("Data Generation Validation (v3.2 - with Aging Effect)")
+        print(f"Data Generation Validation (v3.3 - {n_time}-Year Simulation)")
         print("=" * 70)
         print(f"\n[Sample]")
         print(f"  Total: {stats['n_samples']:,}, Male: {stats['n_male']:,}, Female: {stats['n_female']:,}")
         
         print(f"\n[Smoking Rate] (Target: M ~37%, F ~8%)")
-        print(f"  Male: {stats['male_smoke_rate']*100:.1f}% (avg), t0={stats['male_smoke_t0']*100:.1f}%, t9={stats['male_smoke_t9']*100:.1f}%")
-        print(f"  Female: {stats['female_smoke_rate']*100:.1f}% (avg), t0={stats['female_smoke_t0']*100:.1f}%, t9={stats['female_smoke_t9']*100:.1f}%")
+        print(f"  Male: {stats['male_smoke_rate']*100:.1f}% (avg), t0={stats['male_smoke_t0']*100:.1f}%, t{last_time}={stats['male_smoke_t_last']*100:.1f}%")
+        print(f"  Female: {stats['female_smoke_rate']*100:.1f}% (avg), t0={stats['female_smoke_t0']*100:.1f}%, t{last_time}={stats['female_smoke_t_last']*100:.1f}%")
         print(f"  → alpha_time 효과: 시간 경과에 따른 흡연율 감소 확인")
         
-        print(f"\n[CVD Rate] (Target: 10y cumulative 5-10%)")
-        print(f"  Male - Annual: {stats['male_cvd_annual']*100:.2f}%, 10y Cumulative: {stats['male_cvd_cumulative_10y']*100:.1f}%")
-        print(f"  Female - Annual: {stats['female_cvd_annual']*100:.2f}%, 10y Cumulative: {stats['female_cvd_cumulative_10y']*100:.1f}%")
+        print(f"\n[CVD Rate] (Target: {n_time}y cumulative 5-10%)")
+        print(f"  Male - Annual: {stats['male_cvd_annual']*100:.2f}%, {n_time}y Cumulative: {stats['male_cvd_cumulative']*100:.1f}%")
+        print(f"  Female - Annual: {stats['female_cvd_annual']*100:.2f}%, {n_time}y Cumulative: {stats['female_cvd_cumulative']*100:.1f}%")
         print(f"  Sex Ratio (M/F): {stats['cvd_sex_ratio']:.2f}")
         print(f"  Total CVD Events: {int(stats['total_cvd_events']):,}")
         
@@ -423,11 +433,11 @@ def validate_dgp(data: SimulatedData, verbose: bool = True) -> Dict:
 
 
 if __name__ == "__main__":
-    print("Testing Korean-calibrated Data Generation (v3.2)...\n")
+    print("Testing Korean-calibrated Data Generation (v3.3 - 20yr)...\n")
     
     data = generate_synthetic_data(
         n_samples=20000,
-        n_time=10,
+        n_time=20,  # 20년 시뮬레이션
         sex_ratio=0.5,
         survival_outcome=True,
         seed=42,
