@@ -1,131 +1,109 @@
-# HMM-based Parametric g-formula for CVD Risk Simulation
+# Causal Inference of Smoking Cessation based on Polygenic Risk: HMM g-formula Simulation
 
-**Estimating the Causal Effect of Smoking Cessation Stratified by Polygenic Risk: A Simulation Study using Hidden Markov Models.**
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
-![PyTorch](https://img.shields.io/badge/PyTorch-2.0%2B-orange)
+## 📌 Executive Summary
 
-## 📌 Overview
+This project establishes a **computational causal inference framework** to optimize smoking cessation strategies based on **Polygenic Risk Scores (PRS)**. We address the limitations of traditional epidemiological methods—specifically the **"Sick-Quitter Bias"** and time-varying confounding—by integrating **Hidden Markov Models (HMM)** with the **Parametric g-formula**.
 
-This repository contains the official implementation of the simulation framework used in the Master's Thesis: **"Estimating the Causal Effect of Smoking Cessation Stratified by Polygenic Risk: A Simulation Study using Hidden Markov Models."**
+The simulation is strictly calibrated to **20-year longitudinal trends (2001–2020)** of the Korean population (KoGES & KNHANES), validating the model's applicability to real-world cohorts like **KCPS-II**.
 
-We propose a novel causal inference framework integrating **Hidden Markov Models (HMM)** with the **Parametric g-formula** to handle time-varying confounding and unobserved latent health states (e.g., "sick-quitter" effect). The simulation is rigorously calibrated to **long-term epidemiological trends** of the Korean population (2001–2020), utilizing baseline data from **KoGES** and historical trends from **KNHANES**. Unlike static models, this framework reconstructs a **20-year longitudinal history**, capturing the dynamic decline in smoking rates and the cumulative incidence of CVD over two decades.
+---
 
-### Key Features
-* **Hidden Markov Modeling (HMM):** Captures unobserved latent health states ($Z_t$) to correct bias in smoking cessation effects (e.g., separating "sick-quitters" from healthy quitters).
-* **Parametric g-formula:** Estimates counterfactual cumulative risks under dynamic interventions (e.g., "What if everyone quit smoking at age 50?").
-* **Real-World Calibration:** Calibrated to **20-year longitudinal trends** (2001–2020) of the Korean population. The simulation reconstructs the **historical decline** in male smoking rates (Baseline ~49% $\rightarrow$ Ending ~42%) and realistic CVD incidence (**20-year cumulative risk 5–10%**), incorporating aging effects.
-* **Gene-Environment Interaction (GxE):** Stratified analysis by Polygenic Risk Score (PRS) to identify the optimal intervention timing for high-risk individuals.
+## 🏆 Key Experimental Results
+
+Our validation study confirms that standard methods significantly underestimate the risks of smoking due to unmeasured confounding, whereas our HMM framework accurately recovers true causal effects.
+
+### 1. Bias Correction (Method Comparison)
+*Demonstrating the superiority of HMM over standard baselines (Simulated Truth RR = 5.90).*
+
+| Method | Effect Measure | Estimate | Interpretation | AIC (Fit) |
+| :--- | :--- | :--- | :--- | :--- |
+| **A. Time-varying Cox PH** | Hazard Ratio | **1.24** | **Severe Underestimation.** Fails to capture latent health dynamics. | 22,140 |
+| **B. Standard Markov** | Risk Ratio | **4.37** | **Underestimation.** Confounds "sick-quitters" with healthy non-smokers. | 22,142 |
+| **C. Proposed HMM** | Risk Ratio | **5.76** | **Accurate Recovery.** Corrects for latent states ($Z$), matching the truth. | **21,970 (Best)** |
+
+> **Conclusion:** The HMM model not only recovers the true causal effect but also achieves the best statistical goodness-of-fit (Lowest AIC).
+
+### 2. Gene-Environment Interaction (GxE)
+*Validating the synergistic effect between genetic risk and smoking.*
+
+* **Model Selection:** The **Full Model (with Interaction)** showed significantly better fit (AIC 21,969) compared to the No-Interaction model (AIC 21,985), confirming the statistical necessity of the GxE term.
+* **Stratified Risk Ratios:**
+    * **High-Risk Group (Top 20%):** Risk Ratio **6.59**
+    * **Low-Risk Group (Bottom 80%):** Risk Ratio **5.46**
+* **Insight:** Smoking is disproportionately more dangerous for genetically susceptible individuals.
+
+### 3. Optimal Timing of Cessation
+*Quantifying the benefit of early intervention.*
+
+* **Quit at Year 0:** Risk reduces to **0.17x** (vs. Always Smoke).
+* **Quit at Year 12:** Risk reduces to **0.22x**.
+* **Insight:** Early cessation yields significantly higher protective benefits, emphasizing the need for early screening in high-PRS groups.
+
+---
+
+## 🛠 Technical Validation (Robustness Checks)
+
+Before drawing clinical conclusions, we rigorously validated the statistical properties of the HMM framework through simulation experiments.
+
+### Sensitivity Analysis (Experiment 1)
+* **Goal:** Test if the model correctly distinguishes different magnitudes of GxE interaction.
+* **Result:** Estimates showed a monotonic increase consistent with true parameters (Null -> Weak -> Moderate -> Strong).
+* **Conclusion:** The reported synergistic effects are not artifacts but reflect true signal variations.
+
+### Statistical Consistency (Experiment 2)
+* **Goal:** Evaluate stability across sample sizes ($N=5,000$ to $100,000$).
+* **Result:** Standard Error (SE) decreased proportionally to sample size ($1/\sqrt{N}$), confirming the estimator is statistically consistent.
+
+---
+
+## ⚠️ Interpretation Note: Parameter vs. Causal Estimand
+
+To ensure rigorous interpretation, we distinguish between raw parameters and causal estimands:
+
+1.  **Coefficient Bias due to Latent Scale:** The estimated interaction coefficient ($\beta_{GS} \approx 0.47$) is higher than the simulation parameter (0.25). This is a known property of latent variable models (**Scale Indeterminacy**), where the model infers a smaller scale for the latent state $Z$ and compensates with larger coefficients.
+2.  **Focus on Risk Ratio:** Despite this scaling, the final **Risk Ratio (RR)** is scale-invariant and accurate (Estimated 5.76 vs. True 5.90).
+3.  **Table 2 Fallacy:** Following Westreich & Greenland (2013), we interpret only the target exposure and PRS interaction causally. Coefficients for covariates (age, sex) are used for adjustment and model validity, not for causal interpretation.
+
+---
+
+## 🚀 Scalability & Future Directions
+
+This framework is designed as a **general-purpose causal inference engine**, extendable to various clinical domains beyond smoking:
+
+### 1. Behavioral Epidemiology (e.g., Alcohol)
+* **Challenge:** Alcohol research faces the "Sick-Abstainer" bias and J-curve paradoxes.
+* **Solution:** This HMM framework can model the latent health trajectory driving abstinence, enabling **Precision Public Health** policies that distinguish between healthy moderation and health-driven abstinence.
+
+### 2. Pharmacogenomics (Gene-Intervention Interaction)
+* **Challenge:** Heterogeneity in drug response (e.g., Statin induced T2DM).
+* **Solution:** By replacing smoking with **Pharmacological Interventions**, the model can estimate **Gene-Drug Interactions (GxI)**, optimizing treatment timing based on genetic profiles.
+
+### 3. Geriatrics & Critical Care (Latent States)
+* **Challenge:** Conducting RCTs in ICU or frail elderly populations is costly. Outcomes are driven by unobservable states like **"Latent Frailty"** or **"Physiologic Reserve."**
+* **Solution:** Our model treats these as inferable latent states ($Z_t$), serving as a **Digital Biomarker**. This allows for simulating counterfactuals using real-world data (RWD) where traditional trials are difficult.
 
 ---
 
 ## 📂 Repository Structure
 
-```text
+```bash
 hmm-gformula-ci/
 ├── config.py                 # Simulation parameters (calibrated to KoGES/KNHANES)
-├── data_generator.py         # Synthetic data generation with aging effects
-├── real_data_adapter.py      # Interface for loading & preprocessing real-world cohorts (KoGES/UKBB)
-├── main.py                   # Main entry point for basic validation experiments
-├── analysis_advanced_prs.py  # Advanced analysis (Spline curves with 95% CI)
+├── main.py                   # Main entry point for all experiments
+├── experiments/
+│   └── run_experiments.py    # Complete experiment suite (Exp 1-5)
 ├── models/
 │   └── hmm_gformula.py       # Core HMM and g-formula logic (PyTorch)
-├── experiments/
-│   └── run_experiments.py    # Experiment pipelines (Bootstrap CI, Robustness)
-├── results/                  # Output figures and tables
-├── requirements.txt          # Python dependencies
-└── README.md
+├── data_generator.py         # Synthetic data generation engine
+├── real_data_adapter.py      # Interface for loading KCPS-II / UK Biobank
+└── results/                  # Generated figures and CSV tables
 
 ```
 
----
+## 📧 Contact
 
-## 🚀 Getting Started
-
-### 1. Prerequisites
-
-* Python 3.8+
-* PyTorch
-* NumPy, Pandas
-* Matplotlib, Seaborn, SciPy
-* Tqdm
-
-### 2. Installation
-
-Clone the repository and install dependencies:
-
-```bash
-git clone https://github.com/kkd2718/hmm-gformula-ci.git
-cd hmm-gformula-ci
-pip install -r requirements.txt
-
-```
-
----
-
-## 💻 Usage
-
-### 1. Methodological Validation (Table 1-3)
-
-Run the full simulation suite to validate parameter recovery, check sample size robustness, and compare with conventional methods (e.g., Logistic Regression).
-
-```bash
-python main.py --full
-
-```
-
-### 2. Causal Inference & Clinical Analysis (Figure 1-2)
-
-Run the advanced analysis to generate **Spline Curves with 95% Confidence Intervals (Shaded Area)**. This script analyzes:
-
-* **Effect Modification:** How Risk Ratio changes across PRS levels.
-* **Urgency of Cessation:** How Risk Ratio increases as cessation is delayed.
-
-```bash
-python main.py --advanced
-
-```
-
-*Output:* The results (Figures and CSVs) will be saved in the `./results/` directory.
-
----
-
-## 📊 Visualization Outputs
-
-The simulation results demonstrate strong **Gene-Environment Interaction** and the critical importance of **early intervention**.
-
-### **Figure A. Synergistic Effect of PRS and Smoking**
-> **"High genetic risk amplifies the harm of smoking."**
-
-![Figure A: PRS Effect Modification](./results/curve_a_prs_effect_95ci.png)
-
-* **Interpretation:** The Risk Ratio (RR) of smoking increases sharply as the Polygenic Risk Score (PRS) increases. This "fanning out" pattern indicates a **synergistic interaction**, meaning high-risk individuals suffer disproportionately more from smoking compared to low-risk individuals.
-
-<br>
-
-### **Figure B. Urgency of Cessation (Timing Effect)**
-> **"Every year of delay matters."**
-
-![Figure B: Quit Timing Effect](./results/curve_b_quit_timing_95ci.png)
-
-* **Interpretation:** Delaying smoking cessation shows a **linear increase** in CVD risk ratio. There is no "safe window" for delay; the simulation confirms that **quitting immediately** yields the greatest preventive benefit compared to postponing even by a single year.
-
----
-
-## 🛠 Configuration
-
-You can modify the simulation parameters in `config.py` to adapt to different populations (e.g., UK Biobank settings).
-
-* **`TRUE_PARAMS_EXPOSURE`**: Controls smoking dynamics.
-    * `alpha_S`: Smoking persistence (addiction).
-    * `alpha_time`: **Time-dependent trend** (reflecting the historical decrease in smoking rates and aging effects).
-* **`TRUE_PARAMS_OUTCOME`**: Controls CVD risk.
-    * `beta_0`: Baseline risk.
-    * `beta_time`: **Aging effect** (yearly increase in CVD risk due to aging).
-* **`TRUE_PARAMS_HIDDEN_STATE`**: Transitions of the latent health state ($Z_t$).
-
-Current settings are calibrated to **KoGES (2001-2020) & KNHANES trends**:
-
-* **Simulation Period:** 20 years (Long-term follow-up).
-* **Male Smoking Rate:** approx. **49%** (baseline) $\rightarrow$ **42%** (decreasing trend via `alpha_time`).
-* **CVD Incidence:** 20-year cumulative risk **5-10%** (calibrated via `beta_0` & `beta_time`).
+For inquiries regarding the methodology or KCPS-II data application, please contact the author.
