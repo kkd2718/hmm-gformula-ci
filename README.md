@@ -75,7 +75,7 @@ Before drawing clinical conclusions, we rigorously validated the statistical pro
 * **Conclusion:** The reported synergistic effects are not artifacts but reflect true signal variations.
 
 ### Statistical Consistency (Experiment 2)
-* **Goal:** Evaluate stability across sample sizes ($N=5,000$ to $50,000$).
+* **Goal:** Evaluate stability across sample sizes ($N=5,000$ to $100,000$).
 * **Result:** Standard Error (SE) decreased proportionally to sample size ($1/\sqrt{N}$), confirming the estimator is statistically consistent.
 
 ---
