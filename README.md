@@ -18,12 +18,15 @@ We propose a **Continuous-Time Hidden Markov Model (HMM)** framework to address 
 
 ## 📐 Methodology: Implementation Details
 
-To overcome the limitations of static models (which ignore temporal confounding), we implemented a **Dynamic Latent State Model** using PyTorch.
+To overcome the limitations of static models, we implemented a **Dynamic Latent State Model** using PyTorch.
 
 ### 1. Latent State Transition (Bias Correction)
-We infer a latent physiological state $Z_t$ (e.g., true lung severity) that evolves over time based on previous state, intervention, and covariates.
+We infer a latent physiological state $Z_t$ (e.g., true lung severity) that evolves over time.
+The state transition is driven by the previous state, current intervention ($A$), dynamic covariates ($X_{dyn}$), and **static baseline characteristics** ($X_{static}$).
 
-$$Z_t = \sigma(\mathbf{W}_z Z_{t-1} + \mathbf{W}_a A_{t-1} + \mathbf{W}_x \mathbf{X}_{t-1})$$
+> **Note:** In the simulation, $X_{static}$ represents Polygenic Risk Scores ($G$). In the ARDS study, it represents baseline demographics (Age, Sex, CCI).
+
+$$Z_t = \sigma(\mathbf{W}_z Z_{t-1} + \mathbf{W}_a A_{t-1} + \mathbf{W}_{dyn} \mathbf{X}_{dyn, t-1} + \mathbf{W}_{static} \mathbf{X}_{static})$$
 
 ```python
 # models/dynamic_hmm.py
@@ -32,19 +35,28 @@ class ContinuousHMM(nn.Module):
     def forward(self, ...):
         # ...
         # Update Latent State (Recurrent Step)
-        # Z: Latent State, G: Genetics, L: Covariates, C: Cumulative Load
+        # Z: Latent State (Severity)
+        # G: Represents Static Baseline Features (Age, Sex, CCI)
+        # L: Dynamic Covariates (P/F ratio, Compliance)
+        
         Z = torch.sigmoid(
-            self.psi * Z_prev +       # W_z * Z_{t-1}
-            self.gamma_G * G +        # W_g * G
-            self.gamma_L(L_curr) +    # W_x * X_{t-1}
-            self.gamma_cum * C_curr   # Cumulative Exposure Effect
+            self.psi * Z_prev +       # Previous State (W_z)
+            self.gamma_G * G +        # Static Baseline Susceptibility (W_static)
+            self.gamma_L(L_curr) +    # Dynamic Physiology (W_dyn)
+            self.gamma_cum * C_curr   # Cumulative Exposure Load
         )
 
 ```
 
-### 2. Outcome Model with Smoothness Regularization
+### 2. Outcome Model: Detecting Non-Linearity (U-Shape)
 
-The mortality risk  is modeled as a function of the latent state and the intervention. We use **Smoothness Regularization** to detect non-linear causal effects (e.g., U-shape) without overfitting.
+The mortality risk  is modeled using a **Piecewise Constant Function**  for the intervention (Mechanical Power).
+
+* ** (Binned MP):** Divides Mechanical Power into  bins. This allows the model to learn flexible, non-linear relationships (e.g., U-shape) instead of forcing a linear assumption.
+
+### 3. Smoothness Regularization (Strength Borrowing)
+
+To prevent overfitting in bins with sparse data, we apply a **Smoothness Penalty**. This forces adjacent bins to have similar coefficients, enabling stable estimation even with limited samples ("Strength Borrowing").
 
 ```python
 # models/dynamic_hmm.py
@@ -69,7 +81,7 @@ The mortality risk  is modeled as a function of the latent state and the interve
 
 > **"Can HMM recover true causal effects in the presence of unmeasured confounding?"**
 
-Before the clinical application, we validated the model using a **Smoking Cessation & CVD** simulation calibrated to the Korean population (KoGES/KNHANES). The goal was to correct for "Sick-Quitter Bias" (reverse causality).
+Before the clinical application, we validated the model using a **Smoking Cessation & CVD** simulation calibrated to the Korean population (KoGES/KNHANES). The goal was to correct for "Sick-Quitter Bias" (reverse causality where patients quit smoking *because* they get sick).
 
 ### Validation Results
 
@@ -77,7 +89,7 @@ Before the clinical application, we validated the model using a **Smoking Cessat
 * **Curve B (Quit Timing):** Quantifies the diminishing benefit of cessation as it is delayed.
 
 | PRS Effect Modification | Quit Timing Urgency |
-| :---: | :---: |
+| --- | --- |
 | ![Curve A](study_1_koges_simulation/results/curve_a_prs_effect_95ci.png) | ![Curve B](study_1_koges_simulation/results/curve_b_quit_timing_95ci.png) |
 
 ---
@@ -94,7 +106,7 @@ We applied our HMM framework to **Severe ARDS patients** in the MIMIC-IV databas
 * **HMM vs Baselines:** Standard models fail to capture the risk of low MP due to weaning bias.
 
 | Main Result (HMM vs Baselines) | Robustness Check |
-| :---: | :---: |
+| --- | --- |
 | ![Figure 2A](study_2_ards_mimic/results/Figure2A_Main_Result.png) | ![Figure 2B](study_2_ards_mimic/results/Figure2B_Robustness.png) |
 | **Figure 2A.** The HMM (Red) reveals a U-shape curve, whereas Cox/G-formula (Black/Green) show linear trends. | **Figure 2B.** Comparison with categorical baselines confirms the stability of the HMM's smooth curve. |
 
@@ -108,7 +120,7 @@ hmm-gformula-ci/
 │   ├── dynamic_hmm.py            # Continuous & Binned HMM (PyTorch)
 │   └── baseline_methods.py       # Cox, Logistic, G-formula
 │
-├── study_1_koges_simulation/     # [Part I] Method Validation
+├── study_1_simulation/           # [Part I] Method Validation
 │   ├── main.py                   # Simulation Entry Point
 │   ├── config.py                 # Parameters (KoGES Calibrated)
 │   ├── modules/                  # Data Generation Logic
@@ -134,14 +146,14 @@ hmm-gformula-ci/
 
 ```bash
 # Run full validation suite (All experiments)
-python study_1_koges_simulation/main.py --all
+python study_1_simulation/main.py --all
 
 # Run specific advanced analysis (Spline Curves)
-python study_1_koges_simulation/main.py --advanced
+python study_1_simulation/main.py --advanced
 
 ```
 
-*Outputs will be saved in `study_1_koges_simulation/results/*`
+*Outputs will be saved in `study_1_simulation/results/*`
 
 ### 2. Run ARDS Analysis (Part II)
 
@@ -168,4 +180,4 @@ python study_2_ards_mimic/main.py
 
 If you find this code useful, please cite:
 
-> **Kiduk Kim et al.**. "Dynamic Causal Inference of Mechanical Power in Severe ARDS: A Latent State Modeling Approach." Master's Thesis, Graduate School of Public Health, Yonsei University, 2026.
+> **[Author Name]**. "Dynamic Causal Inference of Mechanical Power in Severe ARDS: A Latent State Modeling Approach." Master's Thesis, [University Name], 2026.
