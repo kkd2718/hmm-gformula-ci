@@ -155,7 +155,7 @@ python study_1_simulation/main.py --advanced
 
 ```
 
-*Outputs will be saved in `study_1_simulation/results/*`
+*Outputs will be saved in `study_1_simulation/results/`*
 
 ### 2. Run ARDS Analysis (Part II)
 
@@ -174,7 +174,7 @@ python study_2_ards_mimic/main.py
 
 ```
 
-*Outputs will be saved in `study_2_ards_mimic/results/*`
+*Outputs will be saved in `study_2_ards_mimic/results/`*
 
 ---
 
