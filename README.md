@@ -49,14 +49,16 @@ class ContinuousHMM(nn.Module):
 ```
 
 ### 2. Outcome Model: Detecting Non-Linearity (U-Shape)
+The mortality risk $Y_t$ is modeled using a **Piecewise Constant Function** $f(A_t)$ for the intervention (Mechanical Power).
 
-The mortality risk  is modeled using a **Piecewise Constant Function**  for the intervention (Mechanical Power).
+$$\text{logit} P(Y_t=1) = \beta_0 + \beta_z Z_t + \underbrace{f(A_t)}_{\text{Binned MP}} + \beta_x \mathbf{X}_t$$
 
-* **(Binned MP):** Divides Mechanical Power into  bins. This allows the model to learn flexible, non-linear relationships (e.g., U-shape) instead of forcing a linear assumption.
+* **$f(A_t)$ (Binned MP):** Divides Mechanical Power into $K$ bins. This allows the model to learn flexible, non-linear relationships (e.g., U-shape) instead of forcing a linear assumption.
 
 ### 3. Smoothness Regularization (Strength Borrowing)
-
 To prevent overfitting in bins with sparse data, we apply a **Smoothness Penalty**. This forces adjacent bins to have similar coefficients, enabling stable estimation even with limited samples ("Strength Borrowing").
+
+$$\mathcal{L} = \mathcal{L}_{\text{NLL}} + \lambda \sum_{k=1}^{K-1} (\beta_{k+1} - \beta_k)^2$$
 
 ```python
 # models/dynamic_hmm.py
