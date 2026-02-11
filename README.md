@@ -77,8 +77,8 @@ Before the clinical application, we validated the model using a **Smoking Cessat
 * **Curve B (Quit Timing):** Quantifies the diminishing benefit of cessation as it is delayed.
 
 | PRS Effect Modification | Quit Timing Urgency |
-| --- | --- |
-|  |  |
+| :---: | :---: |
+| ![Curve A](study_1_koges_simulation/results/curve_a_prs_effect_95ci.png) | ![Curve B](study_1_koges_simulation/results/curve_b_quit_timing_95ci.png) |
 
 ---
 
@@ -94,8 +94,8 @@ We applied our HMM framework to **Severe ARDS patients** in the MIMIC-IV databas
 * **HMM vs Baselines:** Standard models fail to capture the risk of low MP due to weaning bias.
 
 | Main Result (HMM vs Baselines) | Robustness Check |
-| --- | --- |
-|  |  |
+| :---: | :---: |
+| ![Figure 2A](study_2_ards_mimic/results/Figure2A_Main_Result.png) | ![Figure 2B](study_2_ards_mimic/results/Figure2B_Robustness.png) |
 | **Figure 2A.** The HMM (Red) reveals a U-shape curve, whereas Cox/G-formula (Black/Green) show linear trends. | **Figure 2B.** Comparison with categorical baselines confirms the stability of the HMM's smooth curve. |
 
 ---
