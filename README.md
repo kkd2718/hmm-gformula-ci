@@ -52,7 +52,7 @@ class ContinuousHMM(nn.Module):
 
 The mortality risk  is modeled using a **Piecewise Constant Function**  for the intervention (Mechanical Power).
 
-* ** (Binned MP):** Divides Mechanical Power into  bins. This allows the model to learn flexible, non-linear relationships (e.g., U-shape) instead of forcing a linear assumption.
+* **(Binned MP):** Divides Mechanical Power into  bins. This allows the model to learn flexible, non-linear relationships (e.g., U-shape) instead of forcing a linear assumption.
 
 ### 3. Smoothness Regularization (Strength Borrowing)
 
