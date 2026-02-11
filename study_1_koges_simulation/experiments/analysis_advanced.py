@@ -30,11 +30,19 @@ from scipy.ndimage import gaussian_filter1d
 from tqdm import tqdm
 from typing import Dict, List, Tuple, Optional
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Path Setup
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 
+if CURRENT_DIR not in sys.path:
+    sys.path.append(CURRENT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+# Imports
 from config import SEED, DEFAULT_DATA_PARAMS, OUTPUT_DIR, N_COVARIATES, MC_PARAMS, GFORMULA_PARAMS
+from models.hmm_gformula import HiddenMarkovGFormula # models에서 불러오기
 from data_generator import generate_synthetic_data, validate_dgp
-from models import HiddenMarkovGFormula
 
 # Style
 plt.style.use('seaborn-v0_8-whitegrid')

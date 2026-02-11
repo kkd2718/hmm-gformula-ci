@@ -26,8 +26,32 @@ import os
 import sys
 import argparse
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# -----------------------------------------------------------------------------
+# Path Setup
+# -----------------------------------------------------------------------------
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 
+# Root 경로 추가 (models 등 공통 모듈용)
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+# Study 1 경로 추가 (modules, experiments 내부 import용)
+if CURRENT_DIR not in sys.path:
+    sys.path.append(CURRENT_DIR)
+
+# -----------------------------------------------------------------------------
+# Imports 
+# -----------------------------------------------------------------------------
+from config import SEED, OUTPUT_DIR 
+
+from modules.data_generator import generate_synthetic_data, validate_dgp
+
+from experiments.run_experiments import (
+    run_experiment_1, run_experiment_2, run_experiment_3, 
+    run_experiment_4, run_experiment_5, run_all_experiments
+)
+from experiments.analysis_advanced import run_advanced_analysis
 
 def main():
     parser = argparse.ArgumentParser(
@@ -90,7 +114,6 @@ Examples:
     
     # Run advanced analysis (Spline curves)
     if args.advanced:
-        from analysis_advanced_prs import run_advanced_analysis
         run_advanced_analysis(
             n_samples=args.n_samples,
             n_bootstrap=args.n_boot,
@@ -100,7 +123,6 @@ Examples:
     
     # Run all experiments
     if args.all:
-        from experiments.run_experiments import run_all_experiments
         run_all_experiments(
             n_simulations=args.n_sim,
             n_samples=args.n_samples,
@@ -110,7 +132,6 @@ Examples:
     
     # Run specific experiment
     if args.exp == 1:
-        from experiments.run_experiments import run_experiment_1
         print("\n[Experiment 1: Effect Size Sensitivity]")
         run_experiment_1(
             n_simulations=args.n_sim,
@@ -118,7 +139,6 @@ Examples:
         )
         
     elif args.exp == 2:
-        from experiments.run_experiments import run_experiment_2
         print("\n[Experiment 2: Sample Size Robustness]")
         print("Sample sizes: 5,000 / 10,000 / 20,000 / 50,000 / 100,000")
         run_experiment_2(
@@ -126,7 +146,6 @@ Examples:
         )
         
     elif args.exp == 3:
-        from experiments.run_experiments import run_experiment_3
         print("\n[Experiment 3: Model Selection & Ablation Study]")
         print("Comparing: Full Model vs No Interaction vs No Pack-years")
         print("Metrics: Log-Likelihood, AIC, BIC, LRT P-value")
@@ -136,7 +155,6 @@ Examples:
         )
         
     elif args.exp == 4:
-        from experiments.run_experiments import run_experiment_4
         print("\n[Experiment 4: 3-Way Method Comparison]")
         print("Comparing:")
         print("  A. Time-varying Cox PH (Hazard Ratio)")
@@ -150,7 +168,6 @@ Examples:
         )
         
     elif args.exp == 5:
-        from experiments.run_experiments import run_experiment_5
         print("\n[Experiment 5: Causal Inference with Bootstrap CI]")
         run_experiment_5(
             n_samples=args.n_samples,
@@ -158,8 +175,6 @@ Examples:
         )
         
     else:
-        # Default: Run Experiment 5
-        from experiments.run_experiments import run_experiment_5
         print("\n[Default: Running Experiment 5 - Causal Inference]")
         run_experiment_5(
             n_samples=args.n_samples,

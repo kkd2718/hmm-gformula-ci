@@ -1,0 +1,42 @@
+# --------------------------------------------------------------------
+# 1. Python & System Standard
+# --------------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.ipynb_checkpoints
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# --------------------------------------------------------------------
+# 2. Data Protection (CRITICAL)
+# --------------------------------------------------------------------
+
+study_2_ards_mimic/processed_data/
+study_2_ards_mimic/data/
+
+
+*.pt
+*.pth
+*.pkl
+
+# ====================================================================
+# 3. Results 
+# ====================================================================
+
+# (1) Study 1: Ignore all results EXCEPT key figures
+study_1_koges_simulation/results/*
+!study_1_koges_simulation/results/curve_a_prs_effect_95ci.png
+!study_1_koges_simulation/results/curve_b_quit_timing_95ci.png
+
+# (2) Study 2: Ignore all results EXCEPT key figures
+study_2_ards_mimic/results/*
+!study_2_ards_mimic/results/Figure2A_Main_Result.png
+!study_2_ards_mimic/results/Figure2B_Robustness.png

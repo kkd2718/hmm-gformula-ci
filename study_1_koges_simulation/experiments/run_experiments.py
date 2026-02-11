@@ -23,7 +23,14 @@ import time
 import warnings
 warnings.filterwarnings('ignore')
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FILE_DIR = os.path.dirname(os.path.abspath(__file__))
+STUDY_DIR = os.path.dirname(FILE_DIR)
+PROJECT_ROOT = os.path.dirname(STUDY_DIR)
+
+if STUDY_DIR not in sys.path:
+    sys.path.append(STUDY_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
 
 from config import (
     SEED, DEFAULT_DATA_PARAMS, TRAINING_PARAMS,
@@ -32,8 +39,9 @@ from config import (
     MC_PARAMS, GFORMULA_PARAMS, OUTPUT_DIR, N_COVARIATES,
     get_modified_params, get_n_epochs,
 )
-from data_generator import generate_synthetic_data, validate_dgp, SimulatedData
-from models import HiddenMarkovGFormula, estimate_causal_effect
+
+from modules.data_generator import generate_synthetic_data, SimulatedData
+from models.hmm_gformula import HiddenMarkovGFormula
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
