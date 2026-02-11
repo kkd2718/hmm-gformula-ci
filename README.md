@@ -114,7 +114,3 @@ python study_2_ards_mimic/main.py
 If you find this code useful, please cite:
 
 > **[Kiduk Kim et al.]**. "Dynamic Causal Inference of Mechanical Power in Severe ARDS: A Latent State Modeling Approach." Master's Thesis, [Graduate school of public health, Yonsei University], 2026.
-
-```
-
-```
