@@ -236,101 +236,138 @@ def run_all():
         Y_g, M_g = Y[idx], mask[idx]
 
         # === Full-data fit ===
-        print("   Fitting proposed model...")
+        print("   Fitting proposed model (Latent+Smooth)...")
         model_full = ContinuousHMM(n_dyn, n_static, N_BINS)
         model_full.fit(S_g, L_g, C_g, Y_g, M_g,
                        n_epochs=N_EPOCHS, lambda_smooth=LAMBDA_SMOOTH, lr=LR)
 
-        std_gf_full = None
+        # --- Severe: 2×2 factorial + Cox (5 models total) ---
+        #
+        # Figure 2A (Clinical): Cox vs Traditional vs Proposed
+        # Figure 2B (Ablation): 2×2 factorial
+        #
+        #                    No Smooth (λ=0)       Smooth (λ=LAMBDA)
+        #   No Latent (StdGF)   Traditional          StdGF+Smooth
+        #   Latent (HMM)        HMM no-smooth        Proposed
+        #
         hmm_nosmooth_full = None
+        stdgf_smooth_full = None
+        stdgf_nosmooth_full = None
+        cox_full_local = None
 
         if grp == 'Severe':
-            print("   Fitting Standard G-formula...")
-            std_gf_full = StandardGFormula(n_dyn, n_static, N_BINS)
-            std_gf_full.fit(S_g, L_g, C_g, Y_g, M_g,
-                            n_epochs=N_EPOCHS, lambda_smooth=LAMBDA_SMOOTH)
-
-            print("   Fitting Cox PH...")
-            cox_full = CoxPHBaseline(penalizer=0.01)
-            cox_full.fit(S_g, L_g, C_g, Y_g, M_g)
-
-            print("   Fitting HMM without smoothness (λ=0)...")
+            print("   Fitting HMM w/o smoothness (Latent+NoSmooth)...")
             hmm_nosmooth_full = ContinuousHMM(n_dyn, n_static, N_BINS)
             hmm_nosmooth_full.fit(S_g, L_g, C_g, Y_g, M_g,
                                   n_epochs=N_EPOCHS, lambda_smooth=0.0, lr=LR)
 
-        # === Bootstrap ===
+            print("   Fitting Std G-formula + smooth (NoLatent+Smooth)...")
+            stdgf_smooth_full = StandardGFormula(n_dyn, n_static, N_BINS)
+            stdgf_smooth_full.fit(S_g, L_g, C_g, Y_g, M_g,
+                                  n_epochs=N_EPOCHS, lambda_smooth=LAMBDA_SMOOTH)
+
+            print("   Fitting Traditional G-formula (NoLatent+NoSmooth)...")
+            stdgf_nosmooth_full = StandardGFormula(n_dyn, n_static, N_BINS)
+            stdgf_nosmooth_full.fit(S_g, L_g, C_g, Y_g, M_g,
+                                    n_epochs=N_EPOCHS, lambda_smooth=0.0)
+
+            print("   Fitting Cox PH...")
+            cox_full_local = CoxPHBaseline(penalizer=0.01)
+            cox_full_local.fit(S_g, L_g, C_g, Y_g, M_g)
+            cox_full = cox_full_local
+
+        # === Bootstrap (model refit → parameter uncertainty) ===
         print(f"   Bootstrap ({N_BOOTSTRAPS}×)...")
+
+        # Proposed (Latent+Smooth) — all groups
         boot_hmm = {v: [] for v in targets}
-        boot_std = {v: [] for v in targets}
+        # Severe-only: 2×2 factorial + Cox
+        boot_hmm_nosmooth = {v: [] for v in targets}
+        boot_stdgf_smooth = {v: [] for v in targets}
+        boot_stdgf_nosmooth = {v: [] for v in targets}
         boot_cox = {v: [] for v in targets}
-        boot_nosmooth = {v: [] for v in targets}
 
         for b in tqdm(range(N_BOOTSTRAPS), desc=f"Boot {grp}"):
             ib = np.random.choice(len(idx), len(idx), replace=True)
             S_b, L_b, C_b = S_g[ib], L_g[ib], C_g[ib]
             Y_b, M_b = Y_g[ib], M_g[ib]
 
-            # Refit proposed model
+            # Proposed (all groups)
             hmm_b = ContinuousHMM(n_dyn, n_static, N_BINS)
             hmm_b.fit(S_b, L_b, C_b, Y_b, M_b,
                       n_epochs=N_EPOCHS_BOOT, lambda_smooth=LAMBDA_SMOOTH, lr=LR)
 
             for val in targets:
                 t_s = standardize_mp(val, sc_S)
-                # All models return proportion (0-1), multiply by 100 for %
                 boot_hmm[val].append(
                     hmm_b.simulate_gformula(L_b[:, 0, :], C_b, t_s)[-1] * 100
                 )
 
             if grp == 'Severe':
-                std_b = StandardGFormula(n_dyn, n_static, N_BINS)
-                std_b.fit(S_b, L_b, C_b, Y_b, M_b,
+                # HMM no-smooth
+                ns_b = ContinuousHMM(n_dyn, n_static, N_BINS)
+                ns_b.fit(S_b, L_b, C_b, Y_b, M_b,
+                         n_epochs=N_EPOCHS_BOOT, lambda_smooth=0.0, lr=LR)
+
+                # StdGF + smooth
+                sgs_b = StandardGFormula(n_dyn, n_static, N_BINS)
+                sgs_b.fit(S_b, L_b, C_b, Y_b, M_b,
                           n_epochs=N_EPOCHS_BOOT, lambda_smooth=LAMBDA_SMOOTH)
 
+                # Traditional (StdGF no-smooth)
+                sgns_b = StandardGFormula(n_dyn, n_static, N_BINS)
+                sgns_b.fit(S_b, L_b, C_b, Y_b, M_b,
+                           n_epochs=N_EPOCHS_BOOT, lambda_smooth=0.0)
+
+                # Cox PH
                 cox_b = CoxPHBaseline(penalizer=0.01)
                 cox_b.fit(S_b, L_b, C_b, Y_b, M_b)
 
-                # No-smooth ablation
-                nosmooth_b = ContinuousHMM(n_dyn, n_static, N_BINS)
-                nosmooth_b.fit(S_b, L_b, C_b, Y_b, M_b,
-                               n_epochs=N_EPOCHS_BOOT, lambda_smooth=0.0, lr=LR)
-
                 for val in targets:
                     t_s = standardize_mp(val, sc_S)
-                    boot_std[val].append(
-                        std_b.simulate_gformula(L_b[:, 0, :], C_b, t_s)[-1] * 100
-                    )
+                    boot_hmm_nosmooth[val].append(
+                        ns_b.simulate_gformula(L_b[:, 0, :], C_b, t_s)[-1] * 100)
+                    boot_stdgf_smooth[val].append(
+                        sgs_b.simulate_gformula(L_b[:, 0, :], C_b, t_s)[-1] * 100)
+                    boot_stdgf_nosmooth[val].append(
+                        sgns_b.simulate_gformula(L_b[:, 0, :], C_b, t_s)[-1] * 100)
                     boot_cox[val].append(
-                        cox_b.simulate_gformula(L_b[:, 0, :], C_b, t_s)[-1] * 100
-                    )
-                    boot_nosmooth[val].append(
-                        nosmooth_b.simulate_gformula(L_b[:, 0, :], C_b, t_s)[-1] * 100
-                    )
+                        cox_b.simulate_gformula(L_b[:, 0, :], C_b, t_s)[-1] * 100)
 
-        # === Collect ===
+        # === Collect results ===
+        def pct(arr, p):
+            return np.percentile(arr, p) if arr else 0.0
+
         for val in targets:
             res_strat.append({
                 'Group': grp, 'MP': val,
                 'Mean': np.mean(boot_hmm[val]),
-                'Low': np.percentile(boot_hmm[val], 2.5),
-                'High': np.percentile(boot_hmm[val], 97.5),
+                'Low': pct(boot_hmm[val], 2.5),
+                'High': pct(boot_hmm[val], 97.5),
             })
             if grp == 'Severe':
                 comp_results.append({
                     'MP': val,
+                    # Proposed (Latent + Smooth)
                     'HMM_Mean': np.mean(boot_hmm[val]),
-                    'HMM_Low': np.percentile(boot_hmm[val], 2.5),
-                    'HMM_High': np.percentile(boot_hmm[val], 97.5),
-                    'StdGF_Mean': np.mean(boot_std[val]),
-                    'StdGF_Low': np.percentile(boot_std[val], 2.5),
-                    'StdGF_High': np.percentile(boot_std[val], 97.5),
+                    'HMM_Low': pct(boot_hmm[val], 2.5),
+                    'HMM_High': pct(boot_hmm[val], 97.5),
+                    # HMM no-smooth (Latent + NoSmooth)
+                    'HMM_NS_Mean': np.mean(boot_hmm_nosmooth[val]),
+                    'HMM_NS_Low': pct(boot_hmm_nosmooth[val], 2.5),
+                    'HMM_NS_High': pct(boot_hmm_nosmooth[val], 97.5),
+                    # StdGF + smooth (NoLatent + Smooth)
+                    'SGF_S_Mean': np.mean(boot_stdgf_smooth[val]),
+                    'SGF_S_Low': pct(boot_stdgf_smooth[val], 2.5),
+                    'SGF_S_High': pct(boot_stdgf_smooth[val], 97.5),
+                    # Traditional (NoLatent + NoSmooth)
+                    'Trad_Mean': np.mean(boot_stdgf_nosmooth[val]),
+                    'Trad_Low': pct(boot_stdgf_nosmooth[val], 2.5),
+                    'Trad_High': pct(boot_stdgf_nosmooth[val], 97.5),
+                    # Cox PH
                     'Cox_Mean': np.mean(boot_cox[val]),
-                    'Cox_Low': np.percentile(boot_cox[val], 2.5),
-                    'Cox_High': np.percentile(boot_cox[val], 97.5),
-                    'NoSmooth_Mean': np.mean(boot_nosmooth[val]),
-                    'NoSmooth_Low': np.percentile(boot_nosmooth[val], 2.5),
-                    'NoSmooth_High': np.percentile(boot_nosmooth[val], 97.5),
+                    'Cox_Low': pct(boot_cox[val], 2.5),
+                    'Cox_High': pct(boot_cox[val], 97.5),
                 })
 
     df_strat = pd.DataFrame(res_strat)
@@ -344,40 +381,67 @@ def run_all():
     print("\n🎨 Generating Figures...")
 
     if not df_comp.empty:
-        # Figure 2A: Main 3-way comparison
+        # =============================================================
+        # Figure 2A: Clinical Paradigm Shift
+        # Cox (linear, no confounding correction)
+        # vs Traditional G-formula (noisy, no latent, no smooth)
+        # vs Proposed (full model)
+        # =============================================================
         fig, ax = plt.subplots(figsize=(10, 7))
-        plot_smooth_ci(ax, df_comp['MP'], df_comp['HMM_Mean'],
-                       df_comp['HMM_Low'], df_comp['HMM_High'],
-                       '#d62728', 'Proposed (Latent State G-formula)')
-        plot_smooth_ci(ax, df_comp['MP'], df_comp['StdGF_Mean'],
-                       df_comp['StdGF_Low'], df_comp['StdGF_High'],
-                       '#1f77b4', 'Standard G-formula (No Latent State)',
-                       linestyle='--')
+
         plot_smooth_ci(ax, df_comp['MP'], df_comp['Cox_Mean'],
                        df_comp['Cox_Low'], df_comp['Cox_High'],
                        '#2ca02c', 'Cox PH (Clinical Standard)',
                        linestyle='-.')
+        plot_smooth_ci(ax, df_comp['MP'], df_comp['Trad_Mean'],
+                       df_comp['Trad_Low'], df_comp['Trad_High'],
+                       '#7f7f7f', 'Traditional G-formula',
+                       linestyle='--')
+        plot_smooth_ci(ax, df_comp['MP'], df_comp['HMM_Mean'],
+                       df_comp['HMM_Low'], df_comp['HMM_High'],
+                       '#d62728', f'Proposed Model (λ={LAMBDA_SMOOTH})')
+
         ax.set_xlabel('Mechanical Power (J/min)')
         ax.set_ylabel('30-Day Mortality Risk (%)')
-        ax.set_title('Figure 2A. Dose-Response in Severe ARDS')
+        ax.set_title('Figure 2A. Causal Dose-Response of Mechanical Power in Severe ARDS')
         ax.legend(loc='upper left')
         fig.tight_layout()
         fig.savefig(os.path.join(OUTPUT_DIR, 'Figure2A_Main_Result.png'))
         plt.close(fig)
 
-        # Figure 2B: Smoothness Ablation (λ=0.02 vs λ=0)
+        # =============================================================
+        # Figure 2B: Ablation Study
+        #
+        #                 No Smooth          Smooth
+        # No Latent   Traditional (gray)    StdGF+S (blue)
+        # Latent      HMM no-S (orange)     Proposed (red)
+        # =============================================================
         fig, ax = plt.subplots(figsize=(10, 7))
-        plot_smooth_ci(ax, df_comp['MP'], df_comp['HMM_Mean'],
-                       df_comp['HMM_Low'], df_comp['HMM_High'],
-                       '#d62728', f'Proposed (λ={LAMBDA_SMOOTH})')
-        plot_smooth_ci(ax, df_comp['MP'], df_comp['NoSmooth_Mean'],
-                       df_comp['NoSmooth_Low'], df_comp['NoSmooth_High'],
-                       '#7f7f7f', 'Without Smoothness (λ=0)',
-                       linestyle='--')
+
+        # (1) Traditional: No Latent, No Smooth — gray thin dotted
+        ax.plot(df_comp['MP'], df_comp['Trad_Mean'],
+                color='#7f7f7f', linestyle=':', linewidth=1.2,
+                label='No Latent, No Smooth (Traditional)')
+
+        # (2) StdGF + Smooth: No Latent, Smooth — blue dashed
+        ax.plot(df_comp['MP'], df_comp['SGF_S_Mean'],
+                color='#1f77b4', linestyle='--', linewidth=1.8,
+                label='No Latent, Smooth')
+
+        # (3) HMM no-smooth: Latent, No Smooth — orange dotted
+        ax.plot(df_comp['MP'], df_comp['HMM_NS_Mean'],
+                color='#ff7f0e', linestyle=':', linewidth=1.8,
+                label='Latent, No Smooth')
+
+        # (4) Proposed: Latent, Smooth — red solid thick
+        ax.plot(df_comp['MP'], df_comp['HMM_Mean'],
+                color='#d62728', linestyle='-', linewidth=2.5,
+                label='Latent + Smooth (Proposed)')
+
         ax.set_xlabel('Mechanical Power (J/min)')
         ax.set_ylabel('30-Day Mortality Risk (%)')
-        ax.set_title('Figure 2B. Ablation: Smoothness Regularization')
-        ax.legend()
+        ax.set_title('Figure 2B. Ablation: Contribution of Latent State and Smoothness')
+        ax.legend(loc='upper left', fontsize=8)
         fig.tight_layout()
         fig.savefig(os.path.join(OUTPUT_DIR, 'Figure2B_Ablation.png'))
         plt.close(fig)
@@ -395,7 +459,7 @@ def run_all():
     ax.legend()
     ax.set_xlabel('Mechanical Power (J/min)')
     ax.set_ylabel('30-Day Mortality Risk (%)')
-    ax.set_title('Figure 3. Stratified by ARDS Severity')
+    ax.set_title('Figure 3. Dose-Response Stratified by ARDS Severity')
     fig.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, 'Figure3_Subgroup.png'))
     plt.close(fig)
@@ -434,6 +498,76 @@ def run_all():
                 print(f"   {k}: [{', '.join(f'{x:.3f}' for x in v[:5])}...]")
             else:
                 print(f"   {k}: {v:.4f}")
+
+    # -----------------------------------------------------------------
+    # 5. Supplementary: λ Sensitivity Analysis
+    # -----------------------------------------------------------------
+    # Fit proposed model at multiple λ values on Severe subgroup
+    # to show that the U-shape finding is robust to regularization choice.
+    #
+    # Output:
+    #   - Supp_Table_Lambda_Sensitivity.csv (optimal MP + risk at each λ)
+    #   - Supp_Figure_Lambda_Sensitivity.png (overlay plot)
+    # -----------------------------------------------------------------
+    if len(idx_sev) >= 50:
+        print("\n📋 Supplementary: λ Sensitivity Analysis...")
+        lambdas = [0.005, 0.01, 0.02, 0.05, 0.1]
+        lambda_colors = {0.005: '#9467bd', 0.01: '#1f77b4', 0.02: '#d62728',
+                         0.05: '#ff7f0e', 0.1: '#2ca02c'}
+
+        S_sev = S[idx_sev]
+        L_sev = L_dyn[idx_sev]
+        C_sev = C_static[idx_sev]
+        Y_sev = Y[idx_sev]
+        M_sev = mask[idx_sev]
+
+        lambda_results = []  # for table
+        fig_supp, ax_supp = plt.subplots(figsize=(10, 7))
+
+        for lam in lambdas:
+            print(f"   λ={lam}...")
+            m_lam = ContinuousHMM(n_dyn, n_static, N_BINS)
+            m_lam.fit(S_sev, L_sev, C_sev, Y_sev, M_sev,
+                      n_epochs=N_EPOCHS, lambda_smooth=lam, lr=LR)
+
+            risks = []
+            for val in targets:
+                t_s = standardize_mp(val, sc_S)
+                r = m_lam.simulate_gformula(L_sev[:, 0, :], C_sev, t_s)[-1] * 100
+                risks.append(r)
+
+            risks = np.array(risks)
+
+            # Plot
+            lw = 2.5 if lam == LAMBDA_SMOOTH else 1.2
+            ls = '-' if lam == LAMBDA_SMOOTH else '--'
+            label = f'λ={lam}' + (' (primary)' if lam == LAMBDA_SMOOTH else '')
+            ax_supp.plot(targets, risks, color=lambda_colors[lam],
+                         linestyle=ls, linewidth=lw, label=label)
+
+            # Table row
+            opt_idx_lam = np.argmin(risks)
+            lambda_results.append({
+                'Lambda': lam,
+                'Optimal_MP': targets[opt_idx_lam],
+                'Min_Risk': risks[opt_idx_lam],
+                'Risk_at_17J': risks[np.argmin(np.abs(targets - 17))],
+                'Risk_at_10J': risks[np.argmin(np.abs(targets - 10))],
+                'Risk_at_25J': risks[np.argmin(np.abs(targets - 25))],
+            })
+
+        ax_supp.set_xlabel('Mechanical Power (J/min)')
+        ax_supp.set_ylabel('30-Day Mortality Risk (%)')
+        ax_supp.set_title('Supplementary: Sensitivity to Smoothness Penalty (λ)')
+        ax_supp.legend(loc='upper left')
+        fig_supp.tight_layout()
+        fig_supp.savefig(os.path.join(OUTPUT_DIR, 'Supp_Figure_Lambda_Sensitivity.png'))
+        plt.close(fig_supp)
+
+        df_lambda = pd.DataFrame(lambda_results)
+        df_lambda.to_csv(os.path.join(OUTPUT_DIR, 'Supp_Table_Lambda_Sensitivity.csv'),
+                         index=False)
+        print(df_lambda.to_string(index=False))
 
     print(f"\n✅ Complete. Results → {OUTPUT_DIR}")
 

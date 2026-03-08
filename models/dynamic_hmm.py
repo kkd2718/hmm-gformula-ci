@@ -113,7 +113,7 @@ class ContinuousHMM(nn.Module):
         self.gamma_A = nn.Parameter(torch.tensor([0.1]))        # exposure → Z
         self.gamma_dyn = nn.Linear(n_dyn_covariates, 1, bias=False)
         self.gamma_static = nn.Linear(n_static_covariates, 1, bias=False)
-        self.log_sigma_Z = nn.Parameter(torch.tensor([-2.0]))   # state noise (STOCHASTIC)
+        self.log_sigma_Z = nn.Parameter(torch.tensor([-0.5]))   # σ_Z ≈ 0.6 (meaningful Kalman gain)
 
         nn.init.normal_(self.gamma_dyn.weight, 0, 0.05)
         nn.init.normal_(self.gamma_static.weight, 0, 0.05)
@@ -274,42 +274,69 @@ class ContinuousHMM(nn.Module):
     def compute_loss(self, S, L_dyn, C_static, Y, mask, Z_estimated,
                      lambda_smooth=0.02):
         """
-        M-step loss: NLL + smoothness + regularization.
-        Z_estimated is detached (from E-step forward filter).
+        M-step loss: Outcome NLL + Transition MSE + Sigma NLL + Smoothness.
         
-        Gradient flows to: beta_0, beta_Z, beta_bins, beta_dyn, beta_static,
-                          beta_time, and σ_Z (via regularization).
-        Transition params (ψ, γ_*): updated indirectly via EM iterations.
+        Three gradient paths, each cleanly separated:
+        
+        (1) Outcome NLL → β_0, β_Z, β_bins, β_dyn, β_static, β_time
+        (2) Transition MSE → ψ, γ_A, γ_dyn, γ_static  (no σ_Z in denom)
+        (3) Sigma NLL → σ_Z only  (sq_err detached, blocks gradient to ψ/γ)
+        
+        Why decoupled?
+          - MSE for transition params: avoids σ_Z variance collapse
+          - NLL with detached sq_err for σ_Z: learns σ_Z = empirical std of
+            transition residuals, without destabilizing psi/gamma
         """
         N, T, _ = S.shape
         S_bins = self._get_bin_onehot(S)
 
-        total_nll = torch.tensor(0.0, device=S.device)
-
+        # === (1) Outcome NLL ===
+        outcome_nll = torch.tensor(0.0, device=S.device)
         for t in range(T):
-            Z_t = Z_estimated[:, t, :]    # detached from E-step
+            Z_t = Z_estimated[:, t, :]
             A_bin_t = S_bins[:, t, :]
             L_t = L_dyn[:, t, :]
             Y_t = Y[:, t, :]
             m_t = mask[:, t].unsqueeze(1)
 
             prob_Y = self._outcome_probability(Z_t, A_bin_t, L_t, C_static, t=t)
-
             bce = (-Y_t * torch.log(prob_Y + 1e-10)
                    - (1 - Y_t) * torch.log(1 - prob_Y + 1e-10))
-            masked_bce = bce * m_t
-            n_valid = m_t.sum() + 1e-10
-            total_nll = total_nll + masked_bce.sum() / n_valid
+            outcome_nll = outcome_nll + (bce * m_t).sum() / (m_t.sum() + 1e-10)
 
-        # Smoothness regularization on bin coefficients
+        # === (2) Transition MSE + (3) Decoupled Sigma NLL ===
+        transition_loss = torch.tensor(0.0, device=S.device)
+        sigma_loss = torch.tensor(0.0, device=S.device)
+        Z_prev = torch.zeros(N, 1, device=S.device)
+
+        sigma_sq = self.sigma_Z ** 2 + 1e-8
+
+        for t in range(T):
+            m_t = mask[:, t].unsqueeze(1)
+            Z_target = Z_estimated[:, t, :]
+
+            Z_pred_mean, _ = self._latent_transition(
+                Z_prev, S[:, t, :], L_dyn[:, t, :], C_static
+            )
+
+            # (2) MSE: gradient → psi, gamma_A, gamma_dyn, gamma_static
+            sq_err = (Z_target - Z_pred_mean) ** 2
+            transition_loss = transition_loss + (sq_err * m_t).sum() / (m_t.sum() + 1e-10)
+
+            # (3) Sigma NLL: gradient → sigma_Z only
+            #     sq_err.detach() blocks gradient from flowing back to psi/gamma
+            #     sigma_Z learns to match empirical transition residual variance
+            nll_sigma = (0.5 * sq_err.detach() / sigma_sq
+                         + 0.5 * torch.log(sigma_sq))
+            sigma_loss = sigma_loss + (nll_sigma * m_t).sum() / (m_t.sum() + 1e-10)
+
+            Z_prev = Z_target
+
+        # === Smoothness regularization ===
         diff = self.beta_bins[1:] - self.beta_bins[:-1]
         smooth_loss = lambda_smooth * torch.sum(diff ** 2)
 
-        # σ_Z regularization: mild penalty to prevent explosion
-        # (NOT to push toward 0 — EM handles the right level)
-        reg_loss = 0.005 * (self.sigma_Z ** 2)
-
-        return total_nll + smooth_loss + reg_loss
+        return outcome_nll + transition_loss + sigma_loss + smooth_loss
 
     def fit(self, S, L_dyn, C_static, Y, mask,
             n_epochs=300, lambda_smooth=0.02, lr=0.01):
