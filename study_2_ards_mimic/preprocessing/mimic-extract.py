@@ -1,11 +1,21 @@
 """
-mimic-extract.py (Final Clinical Fix)
--------------------------------------
-Key Updates:
+mimic-extract.py (v4.0 — MP Formula Fix)
+-----------------------------------------
+Key Updates (v3 → v4):
 1. FiO2 Logic: Convert % to fraction. If invalid (>1.0 or <0.21) after fix -> NaN.
 2. Berlin Definition: Strictly requires PEEP >= 5 cmH2O for Severity classification.
 3. Outlier Filters: Caps extreme values for Vt, RR, Ppeak to reduce noise.
 4. CCI & BMI: Robust extraction logic included.
+5. [NEW] MP Formula: Gattinoni Simplified (2016) as primary.
+6. [NEW] Becher Simplified (2019) as sensitivity column.
+7. [NEW] Driving Pressure calculated BEFORE MP (dependency order fix).
+8. [NEW] MP Coverage Report for Methods section documentation.
+
+References:
+  [1] Gattinoni L, et al. Ventilator-related causes of lung injury:
+      the mechanical power. Intensive Care Med. 2016;42(10):1567-1575.
+  [2] Becher T, et al. Calculation of mechanical power for pressure-
+      controlled ventilation. Intensive Care Med. 2019;45(9):1321-1323.
 """
 
 import pandas as pd
@@ -55,7 +65,7 @@ CCI_MAPPING = {
 }
 
 def map_cci(df_diag):
-    # Calculate CCI Score
+    """Calculate Charlson Comorbidity Index from ICD codes."""
     df_diag['icd_code'] = df_diag['icd_code'].astype(str)
     scores = pd.DataFrame(index=df_diag['hadm_id'].unique())
     
@@ -73,21 +83,34 @@ def map_cci(df_diag):
     scores['charlson_index'] = scores.sum(axis=1)
     return scores.reset_index().rename(columns={'index': 'hadm_id'})
 
+
 def run_extraction():
-    print("🚀 [Start] MIMIC-IV Extraction (Strict Clinical Logic)...")
+    print("🚀 [Start] MIMIC-IV Extraction (v4.0 — Gattinoni MP)...")
     
+    # =========================================================================
     # 1. Load Cohort
+    # =========================================================================
     print("1️⃣ Loading Cohort...")
-    patients = pd.read_csv(os.path.join(HOSP_DIR, 'patients.csv.gz'), usecols=['subject_id', 'gender', 'anchor_age'])
-    admissions = pd.read_csv(os.path.join(HOSP_DIR, 'admissions.csv.gz'), usecols=['subject_id', 'hadm_id', 'race', 'admission_type', 'hospital_expire_flag'])
+    patients = pd.read_csv(
+        os.path.join(HOSP_DIR, 'patients.csv.gz'),
+        usecols=['subject_id', 'gender', 'anchor_age']
+    )
+    admissions = pd.read_csv(
+        os.path.join(HOSP_DIR, 'admissions.csv.gz'),
+        usecols=['subject_id', 'hadm_id', 'race', 'admission_type', 'hospital_expire_flag']
+    )
     icustays = pd.read_csv(os.path.join(ICU_DIR, 'icustays.csv.gz'))
     
     cohort = icustays.merge(patients, on='subject_id').merge(admissions, on=['subject_id', 'hadm_id'])
     cohort['is_male'] = (cohort['gender'] == 'M').astype(int)
-    cohort['race_group'] = cohort['race'].apply(lambda x: 'White' if 'WHITE' in str(x) else ('Black' if 'BLACK' in str(x) else 'Other'))
+    cohort['race_group'] = cohort['race'].apply(
+        lambda x: 'White' if 'WHITE' in str(x) else ('Black' if 'BLACK' in str(x) else 'Other')
+    )
     cohort = cohort[(cohort['anchor_age'] >= 18) & (cohort['los'] >= 1)]
     
+    # =========================================================================
     # 2. CCI Calculation
+    # =========================================================================
     print("2️⃣ Calculating CCI...")
     if os.path.exists(os.path.join(HOSP_DIR, 'diagnoses_icd.csv.gz')):
         diag = pd.read_csv(os.path.join(HOSP_DIR, 'diagnoses_icd.csv.gz'))
@@ -98,11 +121,32 @@ def run_extraction():
     else:
         cohort['charlson_index'] = 0
 
-    # 3. BMI (Placeholder logic for speed, can be expanded to 'omr' table)
-    cohort['bmi_imputed'] = 25.0 
+    # =========================================================================
+    # 3. BMI (Placeholder — can be expanded to 'omr' table)
+    # =========================================================================
+    print("3️⃣ Extracting BMI from OMR with outlier removal...")
+    omr_path = os.path.join(HOSP_DIR, 'omr.csv.gz')
+    if os.path.exists(omr_path):
+        omr = pd.read_csv(omr_path, usecols=['subject_id', 'result_name', 'result_value'])
+        bmi_data = omr[omr['result_name'] == 'BMI (kg/m2)'].copy()        
+        bmi_data['bmi'] = pd.to_numeric(bmi_data['result_value'], errors='coerce')
+        bmi_data = bmi_data[(bmi_data['bmi'] >= 10.0) & (bmi_data['bmi'] <= 100.0)]
+        patient_bmi = bmi_data.groupby('subject_id')['bmi'].median().reset_index()
+        
+        cohort = cohort.merge(patient_bmi, on='subject_id', how='left')
+        
+        median_bmi = cohort['bmi'].median()
+        cohort['bmi_imputed'] = cohort['bmi'].fillna(median_bmi)
+        
+        print(f"   [BMI Stats] Valid mean: {cohort['bmi_imputed'].mean():.1f}, std: {cohort['bmi_imputed'].std():.1f}")
+    else:
+        print("⚠️ omr.csv.gz not found. Imputing BMI with random normal distribution.")
+        cohort['bmi_imputed'] = np.random.normal(25.0, 3.0, size=len(cohort))
 
-    # 4. Extract Ventilation
-    print("4️⃣ Extracting Ventilation...")
+    # =========================================================================
+    # 4. Extract Ventilation Data
+    # =========================================================================
+    print("3️⃣ Extracting Ventilation...")
     vent_data = []
     chunk_size = 10**6
     
@@ -110,41 +154,49 @@ def run_extraction():
                      usecols=['stay_id', 'charttime', 'itemid', 'valuenum']) as reader:
         for chunk in reader:
             subset = chunk[chunk['itemid'].isin(ITEMS['vent'].keys())]
-            if not subset.empty: vent_data.append(subset)
+            if not subset.empty:
+                vent_data.append(subset)
             
-    if not vent_data: return
+    if not vent_data:
+        print("❌ No ventilation data found. Exiting.")
+        return
+    
     vent = pd.concat(vent_data)
     vent['item_name'] = vent['itemid'].map(ITEMS['vent'])
     vent['day_date'] = pd.to_datetime(vent['charttime']).dt.date
     
-    # [Strict Outlier Filtering before Aggregation]
-    vent = vent[vent['valuenum'] > 0] # Must be positive
+    # --- Strict Outlier Filtering before Aggregation ---
+    vent = vent[vent['valuenum'] > 0]
     
-    # Tidal Volume: Remove > 2000 mL (2.0L) - Likely Error
+    # Tidal Volume: > 2000 mL (2.0L) → likely charting error
     vent.loc[(vent['item_name'] == 'tidvol_obs') & (vent['valuenum'] > 2000), 'valuenum'] = np.nan
-    # RR: Remove > 70
+    # RR: > 70 → artifact
     vent.loc[(vent['item_name'] == 'rr') & (vent['valuenum'] > 70), 'valuenum'] = np.nan
-    # PEEP: Remove > 40
+    # PEEP: > 40 → extreme, likely error
     vent.loc[(vent['item_name'] == 'peep') & (vent['valuenum'] > 40), 'valuenum'] = np.nan
-    # Pressures: Remove > 100
+    # Pressures: > 100 cmH2O → impossible
     vent.loc[(vent['item_name'].isin(['ppeak', 'pplat'])) & (vent['valuenum'] > 100), 'valuenum'] = np.nan
     
-    # FiO2 Pre-check (Do logic after agg or before? Better before if mixed units in same stay)
-    # But mean aggregation handles it better if done later. Let's do daily mean first.
+    # Daily aggregation (mean of all measurements per day)
+    vent_daily = vent.pivot_table(
+        index=['stay_id', 'day_date'], 
+        columns='item_name', values='valuenum', aggfunc='mean'
+    ).reset_index()
     
-    vent_daily = vent.pivot_table(index=['stay_id', 'day_date'], 
-                                  columns='item_name', values='valuenum', aggfunc='mean').reset_index()
     del vent, vent_data
     gc.collect()
 
-    # 5. Extract Lab
-    print("   Extracting Lab...")
+    # =========================================================================
+    # 5. Extract Lab Data
+    # =========================================================================
+    print("4️⃣ Extracting Lab...")
     lab_data = []
     with pd.read_csv(os.path.join(HOSP_DIR, 'labevents.csv.gz'), chunksize=chunk_size,
                      usecols=['subject_id', 'charttime', 'itemid', 'valuenum']) as reader:
         for chunk in reader:
             subset = chunk[chunk['itemid'].isin(ITEMS['lab'].keys())]
-            if not subset.empty: lab_data.append(subset)
+            if not subset.empty:
+                lab_data.append(subset)
             
     if lab_data:
         lab = pd.concat(lab_data)
@@ -156,42 +208,115 @@ def run_extraction():
         cohort_win['outtime'] = pd.to_datetime(cohort_win['outtime']).dt.date
         
         lab_merged = pd.merge(lab, cohort_win, on='subject_id')
-        lab_merged = lab_merged[(lab_merged['day_date'] >= lab_merged['intime']) & 
-                                (lab_merged['day_date'] <= lab_merged['outtime'])]
+        lab_merged = lab_merged[
+            (lab_merged['day_date'] >= lab_merged['intime']) & 
+            (lab_merged['day_date'] <= lab_merged['outtime'])
+        ]
         
-        lab_daily = lab_merged.pivot_table(index=['stay_id', 'day_date'], 
-                                           columns='item_name', values='valuenum', aggfunc='mean').reset_index()
+        lab_daily = lab_merged.pivot_table(
+            index=['stay_id', 'day_date'], 
+            columns='item_name', values='valuenum', aggfunc='mean'
+        ).reset_index()
     else:
         lab_daily = pd.DataFrame(columns=['stay_id', 'day_date', 'pao2', 'lactate'])
 
-    # 6. Merge & Calculate (Logic Refined)
-    print("5️⃣ Calculating Metrics (FiO2 Fix & Berlin Check)...")
+    # =========================================================================
+    # 6. Merge & Calculate Clinical Variables
+    # =========================================================================
+    print("5️⃣ Calculating Metrics (Gattinoni MP + Berlin)...")
     daily_full = pd.merge(vent_daily, lab_daily, on=['stay_id', 'day_date'], how='left')
     
-    # [FiO2 Logic Correction]
+    # --- FiO2 Logic Correction ---
     if 'fio2' in daily_full.columns:
-        # 1. Assume > 1.0 is % -> Divide by 100
+        # Values > 1.0 are likely recorded as percentage → convert to fraction
         daily_full.loc[daily_full['fio2'] > 1.0, 'fio2'] = daily_full['fio2'] / 100.0
-        # 2. Check validity (0.21 ~ 1.0)
-        daily_full.loc[(daily_full['fio2'] < 0.21) | (daily_full['fio2'] > 1.0), 'fio2'] = np.nan
+        # Validity range: 0.21 (room air) to 1.0
+        daily_full.loc[
+            (daily_full['fio2'] < 0.21) | (daily_full['fio2'] > 1.0), 'fio2'
+        ] = np.nan
         
-    # P/F Ratio
+    # --- P/F Ratio ---
     daily_full['pf_ratio'] = daily_full['pao2'] / daily_full['fio2']
     
-    # [Unit Conversion] Tidal Volume mL -> L
+    # --- Unit Conversion: Tidal Volume mL → L ---
     daily_full['vt_liters'] = daily_full['tidvol_obs'] / 1000.0
     
-    # MP Calculation
-    daily_full['ppeak'] = daily_full['ppeak'].fillna(daily_full['pplat'] + 2)
-    daily_full['mp_j_min'] = 0.098 * daily_full['rr'] * daily_full['vt_liters'] * (daily_full['ppeak'] + daily_full['peep']) / 2.0
-    
-    # Compliance
+    # --- Driving Pressure (MUST be calculated BEFORE MP) ---
+    # ΔP = Pplat - PEEP
     daily_full['driving_pressure'] = daily_full['pplat'] - daily_full['peep']
-    daily_full.loc[daily_full['driving_pressure'] <= 1, 'driving_pressure'] = np.nan # Avoid Inf
+    daily_full.loc[daily_full['driving_pressure'] <= 1, 'driving_pressure'] = np.nan
+    
+    # --- Compliance ---
     daily_full['compliance'] = daily_full['tidvol_obs'] / daily_full['driving_pressure']
     
-    # 7. Final Berlin Definition Filtering
-    # Criteria: P/F <= 300 AND PEEP >= 5
+    # --- Ppeak Imputation ---
+    # When Ppeak is missing but Pplat is available:
+    # Ppeak ≈ Pplat + resistive pressure drop
+    # Assumed: Rrs ≈ 5 cmH2O/L/s, typical inspiratory flow ~0.5 L/s → ~2.5 cmH2O
+    # Conservative estimate: +2 cmH2O (Akoumianaki et al., Ann Intensive Care, 2017)
+    daily_full['ppeak_imputed'] = daily_full['ppeak'].fillna(daily_full['pplat'] + 2)
+
+    # =====================================================================
+    # PRIMARY: Gattinoni Simplified MP (Intensive Care Med, 2016)
+    # MP = 0.098 × RR × Vt × (Ppeak − 0.5 × ΔP)
+    #
+    # Requires: RR, Vt, Ppeak (or imputed), Pplat, PEEP
+    # Note: When Pplat is missing, driving_pressure is NaN → MP is NaN
+    #       This is intentional (Gattinoni formula requires ΔP)
+    # =====================================================================
+    daily_full['mp_gattinoni'] = (
+        0.098 
+        * daily_full['rr'] 
+        * daily_full['vt_liters'] 
+        * (daily_full['ppeak_imputed'] - 0.5 * daily_full['driving_pressure'])
+    )
+    
+    # Validity checks
+    daily_full.loc[daily_full['mp_gattinoni'] <= 0, 'mp_gattinoni'] = np.nan
+    daily_full.loc[daily_full['mp_gattinoni'] > 100, 'mp_gattinoni'] = np.nan
+
+    # =====================================================================
+    # SENSITIVITY: Becher Simplified MP (Intensive Care Med, 2019)
+    # MP_surrogate = 0.098 × RR × Vt × Ppeak
+    #
+    # Advantage: Does NOT require Pplat → larger analytic sample
+    # Use for sensitivity analysis to show robustness to formula choice
+    # =====================================================================
+    daily_full['mp_becher'] = (
+        0.098 
+        * daily_full['rr'] 
+        * daily_full['vt_liters'] 
+        * daily_full['ppeak_imputed']
+    )
+    
+    # Validity checks
+    daily_full.loc[daily_full['mp_becher'] <= 0, 'mp_becher'] = np.nan
+    daily_full.loc[daily_full['mp_becher'] > 100, 'mp_becher'] = np.nan
+
+    # =====================================================================
+    # PRIMARY ANALYSIS: Use Gattinoni
+    # To run sensitivity analysis with Becher, change this line to:
+    #   daily_full['mp_j_min'] = daily_full['mp_becher']
+    # =====================================================================
+    daily_full['mp_j_min'] = daily_full['mp_gattinoni']
+
+    # --- MP Coverage Report ---
+    n_total = len(daily_full)
+    n_pplat = daily_full['pplat'].notna().sum()
+    n_gatt = daily_full['mp_gattinoni'].notna().sum()
+    n_bech = daily_full['mp_becher'].notna().sum()
+    
+    print(f"\n   📊 MP Formula Coverage Report:")
+    print(f"      Total daily observations:     {n_total:,}")
+    print(f"      Pplat available:              {n_pplat:,} ({n_pplat/n_total*100:.1f}%)")
+    print(f"      Gattinoni MP calculable:      {n_gatt:,} ({n_gatt/n_total*100:.1f}%)")
+    print(f"      Becher MP calculable:         {n_bech:,} ({n_bech/n_total*100:.1f}%)")
+    print(f"      Lost by choosing Gattinoni:   {n_bech - n_gatt:,} observations\n")
+
+    # =========================================================================
+    # 7. Berlin Definition Filtering
+    # =========================================================================
+    # Criteria: P/F ≤ 300 AND PEEP ≥ 5 cmH2O
     daily_full = daily_full.dropna(subset=['pf_ratio', 'peep'])
     ards_mask = (daily_full['pf_ratio'] <= 300) & (daily_full['peep'] >= 5)
     
@@ -203,21 +328,36 @@ def run_extraction():
     final_daily['day_num'] = final_daily.groupby('stay_id').cumcount()
     final_daily = final_daily[final_daily['day_num'] <= 30]
     
-    # Merge Static
+    # =========================================================================
+    # 8. Merge Static Variables & Save
+    # =========================================================================
     static_cols = [
-        'stay_id', 'subject_id', 'anchor_age', 'is_male', 'race_group', 'bmi_imputed', 'admission_type',
-        'charlson_index', 'hospital_expire_flag'
+        'stay_id', 'subject_id', 'anchor_age', 'is_male', 'race_group',
+        'bmi_imputed', 'admission_type', 'charlson_index', 'hospital_expire_flag'
     ]
-    # Add CCI cols if they exist
+    # Add individual CCI component columns if they exist
     cci_cols = [c for c in cohort.columns if 'cci_' in c]
     static_cols.extend(cci_cols)
-    static_cols = list(set(static_cols)) # unique
+    static_cols = list(set(static_cols))
     
     final_cohort = pd.merge(final_daily, cohort[static_cols], on='stay_id', how='inner')
     
-    print(f"✅ Data Cleaned & Saved: {os.path.join(OUTPUT_DIR, 'ards_standard_cohort.csv')}")
-    print(f"   ARDS Patients (Strict Berlin): {final_cohort['stay_id'].nunique():,}")
-    final_cohort.to_csv(os.path.join(OUTPUT_DIR, 'ards_standard_cohort.csv'), index=False)
+    # --- Final Summary ---
+    n_patients = final_cohort['stay_id'].nunique()
+    n_with_mp = final_cohort['mp_j_min'].notna().sum()
+    n_rows = len(final_cohort)
+    
+    save_path = os.path.join(OUTPUT_DIR, 'ards_standard_cohort.csv')
+    final_cohort.to_csv(save_path, index=False)
+    
+    print(f"✅ Extraction Complete.")
+    print(f"   Output:          {save_path}")
+    print(f"   ARDS Patients:   {n_patients:,} (Strict Berlin)")
+    print(f"   Total Rows:      {n_rows:,}")
+    print(f"   Rows with MP:    {n_with_mp:,} ({n_with_mp/n_rows*100:.1f}%)")
+    print(f"   MP Formula:      Gattinoni Simplified (ICM, 2016)")
+    print(f"   Sensitivity:     mp_becher column available for Becher (ICM, 2019)")
+
 
 if __name__ == "__main__":
     run_extraction()
