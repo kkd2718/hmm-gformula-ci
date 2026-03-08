@@ -39,4 +39,4 @@ study_1_koges_simulation/results/*
 # (2) Study 2: Ignore all results EXCEPT key figures
 study_2_ards_mimic/results/*
 !study_2_ards_mimic/results/Figure2A_Main_Result.png
-!study_2_ards_mimic/results/Figure2B_Robustness.png
+!study_2_ards_mimic/results/Figure2B_Ablation.png
