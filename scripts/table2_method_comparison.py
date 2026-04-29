@@ -61,7 +61,7 @@ def main() -> None:
                         help="Bootstrap reps for VEM-SSM (theta-fixed).")
     parser.add_argument("--xu-b-draws", type=int, default=200,
                         help="MC draws over b_i posterior for XuGLMM.")
-    parser.add_argument("--vem-epochs", type=int, default=50)
+    parser.add_argument("--vem-epochs", type=int, default=200)
     parser.add_argument("--vem-lr", type=float, default=1e-2)
     parser.add_argument("--vem-mc", type=int, default=4)
     parser.add_argument("--reference-mp", type=float, default=REFERENCE_MP_J_MIN)
