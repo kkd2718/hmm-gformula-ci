@@ -217,25 +217,29 @@ class StandardGFormula(BenchmarkMethod):
         self, cohort: ARDSCohort, target_bins: Sequence[int],
         n_bootstrap: int = 100, seed: int = 0, refit: bool = True,
     ) -> DoseResponseResult:
-        """Bootstrap dose-response. refit=True (default) refits all models per
-        replicate for valid theta-uncertainty CIs (gfoRmula convention)."""
+        """Outer bootstrap × inner bin loop: B fits (not K*B); paired RD across bins.
+
+        For each bootstrap replicate b: cluster-resample patients, refit if needed,
+        then evaluate the counterfactual at every target bin against the SAME
+        resampled cohort. This both avoids redundant fits (gfoRmula convention)
+        and preserves per-replicate correlation between bins for valid paired
+        risk-difference CIs.
+        """
         rng = np.random.default_rng(seed)
         if not refit and self._beta_Y is None:
             self.fit(cohort)
-        risks_per_bin: list[list[float]] = []
-        for k in target_bins:
-            boot = []
-            for _ in range(n_bootstrap):
-                idx = cluster_bootstrap_indices(cohort.subject_ids, rng)
-                boot_cohort = slice_cohort(cohort, idx)
-                if refit:
-                    self.fit(boot_cohort)
+        K = len(target_bins)
+        risk_mat = np.zeros((K, n_bootstrap), dtype=np.float64)
+        for b in range(n_bootstrap):
+            idx = cluster_bootstrap_indices(cohort.subject_ids, rng)
+            boot_cohort = slice_cohort(cohort, idx)
+            if refit:
+                self.fit(boot_cohort)
+            for ki, k in enumerate(target_bins):
                 cum = self._simulate_counterfactual(
                     boot_cohort, intervene_bin=k, rng=rng,
                 )
-                boot.append(float(cum.mean()))
-            risks_per_bin.append(boot)
-        risk_mat = np.asarray(risks_per_bin)
+                risk_mat[ki, b] = float(cum.mean())
         return DoseResponseResult(
             bins=list(target_bins),
             bin_centers_J_min=bin_centers_J_min(cohort),

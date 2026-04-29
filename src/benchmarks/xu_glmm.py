@@ -136,25 +136,22 @@ class XuGLMM(BenchmarkMethod):
         self, cohort: ARDSCohort, target_bins: Sequence[int],
         n_bootstrap: int = 100, seed: int = 0, refit: bool = True,
     ) -> DoseResponseResult:
-        """Bootstrap dose-response. refit=True (default) refits beta and
-        sigma_b on each resampled cohort for valid uncertainty CIs."""
+        """Outer bootstrap × inner bin loop (B fits not K*B); paired RD."""
         rng = np.random.default_rng(seed)
         if not refit and self._beta is None:
             self.fit(cohort)
-        risks_per_bin: list[list[float]] = []
-        for k in target_bins:
-            boot = []
-            for _ in range(n_bootstrap):
-                idx = cluster_bootstrap_indices(cohort.subject_ids, rng)
-                boot_cohort = slice_cohort(cohort, idx)
-                if refit:
-                    self.fit(boot_cohort)
-                idx_local = np.arange(boot_cohort.Y.shape[0])
-                boot.append(
-                    self._counterfactual_risk(boot_cohort, k, idx_local, rng)
+        K = len(target_bins)
+        risk_mat = np.zeros((K, n_bootstrap), dtype=np.float64)
+        for b in range(n_bootstrap):
+            idx = cluster_bootstrap_indices(cohort.subject_ids, rng)
+            boot_cohort = slice_cohort(cohort, idx)
+            if refit:
+                self.fit(boot_cohort)
+            idx_local = np.arange(boot_cohort.Y.shape[0])
+            for ki, k in enumerate(target_bins):
+                risk_mat[ki, b] = self._counterfactual_risk(
+                    boot_cohort, k, idx_local, rng,
                 )
-            risks_per_bin.append(boot)
-        risk_mat = np.asarray(risks_per_bin)
         return DoseResponseResult(
             bins=list(target_bins),
             bin_centers_J_min=bin_centers_J_min(cohort),

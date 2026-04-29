@@ -69,35 +69,44 @@ class VEMSSMBenchmark(BenchmarkMethod):
         self, cohort: ARDSCohort, target_bins: Sequence[int],
         n_bootstrap: int = 100, seed: int = 0, refit: bool = False,
     ) -> DoseResponseResult:
-        """Cluster-bootstrap dose-response. refit=True is supported but costs
-        one full ELBO training run per replicate; use sparingly."""
+        """Outer bootstrap × inner bin loop. refit=True triggers a full
+        ELBO retrain per bootstrap replicate (B fits, not K*B); refit=False
+        uses the pre-trained self._model with theta-fixed cluster bootstrap.
+
+        All cohort tensors are moved to the model's device (GPU when CUDA is
+        available) before the simulator is called, so that GPU-side model
+        parameters and host-side bootstrap tensors do not collide.
+        """
+        import torch as _torch
         rng = np.random.default_rng(seed)
         if not refit and self._model is None:
             self.fit(cohort)
         L = cohort.feature_layout
         bin_lo, bin_hi = L["bin_slice"]
-        risks_per_bin: list[list[float]] = []
-        for k in target_bins:
-            boot = []
-            for _ in range(n_bootstrap):
-                idx = cluster_bootstrap_indices(cohort.subject_ids, rng)
-                boot_cohort = slice_cohort(cohort, idx)
-                if refit:
-                    self.fit(boot_cohort)
+        K = len(target_bins)
+        risk_mat = np.zeros((K, n_bootstrap), dtype=np.float64)
+        for b in range(n_bootstrap):
+            idx = cluster_bootstrap_indices(cohort.subject_ids, rng)
+            boot_cohort = slice_cohort(cohort, idx)
+            if refit:
+                self.fit(boot_cohort)
+            device = next(self._model.parameters()).device
+            drivers_dev = boot_cohort.drivers.to(device)
+            covariates_dev = boot_cohort.covariates.to(device)
+            C_static_dev = boot_cohort.C_static.to(device)
+            for ki, k in enumerate(target_bins):
                 res = simulate_g_formula(
                     model=self._model,
-                    bootstrap_drivers=boot_cohort.drivers,
-                    bootstrap_covariates=boot_cohort.covariates,
+                    bootstrap_drivers=drivers_dev,
+                    bootstrap_covariates=covariates_dev,
                     intervene_bin=k,
                     n_bins=L["n_bins"],
                     bin_slice=slice(bin_lo, bin_hi),
-                    C_static=boot_cohort.C_static,
+                    C_static=C_static_dev,
                     sample_Z=True,
                     seed=int(rng.integers(0, 2**31 - 1)),
                 )
-                boot.append(float(res["marginal_risk_T"].cpu()))
-            risks_per_bin.append(boot)
-        risk_mat = np.asarray(risks_per_bin)
+                risk_mat[ki, b] = float(res["marginal_risk_T"].cpu())
         return DoseResponseResult(
             bins=list(target_bins),
             bin_centers_J_min=bin_centers_J_min(cohort),
