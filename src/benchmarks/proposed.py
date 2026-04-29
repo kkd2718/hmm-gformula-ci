@@ -27,6 +27,9 @@ class VEMSSMBenchmark(BenchmarkMethod):
     so default n_bootstrap is small. For a published primary CI use refit=False
     with cluster bootstrap of the simulation step only; theta uncertainty is
     reported separately on a refit-bootstrap subset (Keil et al. 2014).
+
+    `last_history` retains the TrainingHistory of the most recent fit() call
+    for ELBO-trajectory diagnostics.
     """
 
     method_name = "vem_ssm"
@@ -35,6 +38,7 @@ class VEMSSMBenchmark(BenchmarkMethod):
         self.config = config or VEMConfig()
         self._model: LinearGaussianSSM | None = None
         self._posterior: StructuredGaussianMarkovPosterior | None = None
+        self.last_history = None
 
     def _new_model(self, cohort: ARDSCohort) -> None:
         L = cohort.feature_layout
@@ -52,7 +56,7 @@ class VEMSSMBenchmark(BenchmarkMethod):
 
     def fit(self, cohort: ARDSCohort, **kwargs) -> None:
         self._new_model(cohort)
-        train_vem(
+        self.last_history = train_vem(
             model=self._model, posterior=self._posterior,
             Y=cohort.Y, drivers=cohort.drivers, covariates=cohort.covariates,
             at_risk=cohort.at_risk, C_static=cohort.C_static,
