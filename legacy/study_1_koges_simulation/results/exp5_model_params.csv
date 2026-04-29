@@ -1,0 +1,28 @@
+parameter,value,description
+psi,0.5,Latent state autoregression
+gamma_S,0.10000000149011612,Smoking -> Latent state
+gamma_G,0.10000000149011612,PRS -> Latent state
+sigma_Z,0.044240158051252365,Latent state noise SD
+beta_0,-6.34063196182251,Baseline CVD log-odds
+beta_Z,1.5078802108764648,Latent state -> CVD
+beta_S,-0.20636510848999023,Smoking -> CVD (direct)
+beta_G,0.18121230602264404,PRS -> CVD (direct)
+alpha_0,-2.0,Baseline smoking log-odds
+alpha_S,1.5,Smoking persistence
+alpha_Z,0.10000000149011612,Latent state -> Smoking
+alpha_G,0.0,PRS -> Smoking
+gamma_C,0.05000000074505806,Pack-years -> Latent state
+gamma_GS,0.0,PRS x Smoking interaction (Z)
+gamma_GC,0.0,PRS x Pack-years interaction (Z)
+beta_GS,0.49211567640304565,PRS x Smoking interaction (Y)
+beta_time,-0.0019439838360995054,Time trend (aging effect)
+alpha_time,-0.029999999329447746,Time trend (cessation)
+gamma_L_age,0.01497347466647625,gamma_L effect of age
+gamma_L_sex,-0.007545184809714556,gamma_L effect of sex
+gamma_L_bmi,-0.04551522806286812,gamma_L effect of bmi
+beta_L_age,0.09814757108688354,beta_L effect of age
+beta_L_sex,0.5501515865325928,beta_L effect of sex
+beta_L_bmi,0.3413746654987335,beta_L effect of bmi
+alpha_L_age,0.17920102179050446,alpha_L effect of age
+alpha_L_sex,0.08995000272989273,alpha_L effect of sex
+alpha_L_bmi,-0.09115569293498993,alpha_L effect of bmi
