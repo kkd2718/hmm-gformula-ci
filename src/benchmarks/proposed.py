@@ -41,6 +41,7 @@ class VEMSSMBenchmark(BenchmarkMethod):
         self.last_history = None
 
     def _new_model(self, cohort: ARDSCohort) -> None:
+        import torch as _torch
         L = cohort.feature_layout
         ssm_cfg = SSMConfig(
             n_bins=L["n_bins"],
@@ -48,11 +49,12 @@ class VEMSSMBenchmark(BenchmarkMethod):
             n_static_covariates=L["n_static"],
             fit_time_effect=True,
         )
-        self._model = LinearGaussianSSM(ssm_cfg)
+        device = _torch.device("cuda" if _torch.cuda.is_available() else "cpu")
+        self._model = LinearGaussianSSM(ssm_cfg).to(device)
         p = ssm_cfg.n_bins + ssm_cfg.n_dyn_covariates + ssm_cfg.n_static_covariates
         self._posterior = StructuredGaussianMarkovPosterior(
             QConfig(n_drivers=p, n_covariates=p + 1)
-        )
+        ).to(device)
 
     def fit(self, cohort: ARDSCohort, **kwargs) -> None:
         self._new_model(cohort)
