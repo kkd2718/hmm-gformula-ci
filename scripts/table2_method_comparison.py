@@ -59,6 +59,8 @@ def main() -> None:
                         help="Bootstrap reps for StandardGFormula and XuGLMM (refit).")
     parser.add_argument("--n-bootstrap-vem", type=int, default=100,
                         help="Bootstrap reps for VEM-SSM (theta-fixed).")
+    parser.add_argument("--xu-b-draws", type=int, default=200,
+                        help="MC draws over b_i posterior for XuGLMM.")
     parser.add_argument("--vem-epochs", type=int, default=50)
     parser.add_argument("--vem-lr", type=float, default=1e-2)
     parser.add_argument("--vem-mc", type=int, default=4)
@@ -101,7 +103,7 @@ def main() -> None:
 
     if "xu" not in args.skip:
         print("[xu_glmm] fitting + refit-bootstrap ...")
-        m_xu = XuGLMM()
+        m_xu = XuGLMM(n_b_draws=args.xu_b_draws)
         res_xu = m_xu.dose_response(
             cohort, target_bins=target_bins,
             n_bootstrap=args.n_bootstrap_cls, seed=args.seed + 1, refit=True,

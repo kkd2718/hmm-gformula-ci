@@ -55,12 +55,12 @@ def _laplace_glmm_fit(
         s = mu * (1.0 - mu) + 1e-8
         resid = w * (mu - y)
         Wb = w * s
-        b_new = np.zeros_like(b)
-        for g in range(G):
-            mask = inv == g
-            num = -(resid[mask].sum() + b[g] / sigma2)
-            den = Wb[mask].sum() + 1.0 / sigma2
-            b_new[g] = b[g] + num / max(den, 1e-8)
+        # Vectorized per-group Newton step: O(N) via bincount instead of O(N*G).
+        resid_sum = np.bincount(inv, weights=resid, minlength=G)
+        Wb_sum = np.bincount(inv, weights=Wb, minlength=G)
+        num = -(resid_sum + b / sigma2)
+        den = np.maximum(Wb_sum + 1.0 / sigma2, 1e-8)
+        b_new = b + num / den
         sigma2_new = max(np.var(b_new), 1e-4)
         if (
             np.max(np.abs(beta_new - beta)) < tol
