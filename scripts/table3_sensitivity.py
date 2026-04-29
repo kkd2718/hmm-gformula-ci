@@ -1,12 +1,14 @@
-"""Generate Table 3: E-value primary + LOCO secondary sensitivity.
+"""Generate Table 3: E-value (3 methods) + LOCO + grouped exclusion (VEM-SSM only).
 
-E-value: VanderWeele & Ding (2017) — minimum strength of unmeasured confounding
-(on RR scale) needed to explain away the observed risk difference vs the MP=17
-reference, computed at each MP bin.
+Panel A — E-value (VanderWeele & Ding 2017):
+    Per-bin RR vs MP=17 reference for each of the 3 methods, with E-value
+    quantifying minimum unmeasured-confounding strength to nullify the result.
 
-LOCO: leave-one-covariate-out for the proposed VEM-SSM. Each TV covariate is
-removed from the cohort, the model refit, and the dose-response point estimate
-recorded. Reports the range of point estimates per bin across LOCO refits.
+Panel B — VEM-SSM LOCO + grouped exclusion:
+    Refit VEM-SSM under (i) each TV covariate dropped, (ii) each static
+    covariate dropped, (iii) named clinical-scenario covariate groups dropped.
+    Reports the range of dose-response point estimates per MP bin across
+    refits, vs the full-covariate primary estimate.
 
 Outputs:
     <out_dir>/table3_sensitivity.md
@@ -25,18 +27,42 @@ if hasattr(sys.stdout, "reconfigure"):
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from src.data.ards import ARDSConfig, TV_COLS
+from src.data.ards import ARDSConfig, TV_COLS, STATIC_COLS
 from src.sensitivity.evalue import evalue_for_rr
-from src.sensitivity.loco import run_loco
+from src.sensitivity.loco import run_loco, GroupExclusion
 from src.benchmarks.proposed import VEMSSMBenchmark, VEMConfig
 from src.training.variational_em import TrainingConfig
 
 
 METHOD_LABELS = {
-    "standard_gformula": "Standard g-formula",
+    "standard_gformula": "Standard parametric g-formula",
     "xu_glmm": "Xu 2024 GLMM",
     "vem_ssm": "VEM-SSM (proposed)",
 }
+
+# Pre-specified clinical-scenario covariate groups for grouped exclusion.
+CLINICAL_GROUPS = [
+    GroupExclusion(
+        label="All TV covariates",
+        tv_cols=tuple(TV_COLS),
+    ),
+    GroupExclusion(
+        label="All static covariates",
+        static_cols=tuple(STATIC_COLS),
+    ),
+    GroupExclusion(
+        label="Oxygenation domain (P/F + PaCO2)",
+        tv_cols=("pf_ratio", "paco2"),
+    ),
+    GroupExclusion(
+        label="Hemodynamic domain (HR + MAP)",
+        tv_cols=("heart_rate", "map_mmhg"),
+    ),
+    GroupExclusion(
+        label="Metabolic/renal domain (lactate + creatinine)",
+        tv_cols=("lactate", "creatinine"),
+    ),
+]
 
 
 def main() -> None:
@@ -57,19 +83,32 @@ def main() -> None:
 
     z = np.load(args.npz)
     ref_bin = int(z["reference_bin"][0])
-
-    # ----- E-value table -----
     methods = [m for m in METHOD_LABELS if f"{m}__risk_mean" in z.files]
     centers = z[f"{methods[0]}__bin_centers_J_min"]
     K = len(centers)
-    target_bins = np.arange(K)
+    target_bins = list(range(K))
 
-    rows: list[list[str]] = []
+    out_lines: list[str] = [
+        "# Table 3. Sensitivity to unmeasured confounding (E-value) and "
+        "covariate-set choice (LOCO + grouped exclusion)",
+        "",
+        "## Panel A. E-value per MP bin (VanderWeele & Ding 2017) — three methods",
+        "",
+        f"_Reference bin: bin {ref_bin} (≈ {centers[ref_bin]:.1f} J/min, "
+        f"Costa 2021 cutoff). RR = P(Y|MP=bin) / P(Y|MP=ref). "
+        f"E-value = minimum unmeasured-confounder RR required to nullify the "
+        f"observed RR._",
+        "",
+    ]
+
     headers = ["MP bin", "Center (J/min)"] + [
         f"{label} — RR" for k, label in METHOD_LABELS.items() if k in methods
     ] + [
         f"{label} — E-value" for k, label in METHOD_LABELS.items() if k in methods
     ]
+    out_lines.append("| " + " | ".join(headers) + " |")
+    out_lines.append("|" + "|".join(["---"] * len(headers)) + "|")
+
     for k in target_bins:
         if k == ref_bin:
             continue
@@ -84,81 +123,122 @@ def main() -> None:
             rrs.append(rr)
             row.append(f"{rr:.2f}")
         for rr in rrs:
-            if not np.isfinite(rr):
-                row.append("-"); continue
-            row.append(f"{evalue_for_rr(rr):.2f}")
-        rows.append(row)
-
-    out_lines = [
-        "# Table 3. Sensitivity to unmeasured confounding (E-value) and LOCO covariate exclusion",
-        "",
-        "## Panel A. E-value per MP bin (VanderWeele & Ding 2017)",
-        "",
-        f"_Reference: bin {ref_bin} (≈ {centers[ref_bin]:.1f} J/min). RR = "
-        f"P(Y|MP=bin) / P(Y|MP=ref). E-value = min unmeasured-confounder RR "
-        f"required to explain the observed RR away._",
-        "",
-        "| " + " | ".join(headers) + " |",
-        "|" + "|".join(["---"] * len(headers)) + "|",
-    ]
-    for row in rows:
+            row.append(f"{evalue_for_rr(rr):.2f}" if np.isfinite(rr) else "-")
         out_lines.append("| " + " | ".join(row) + " |")
 
-    # ----- LOCO panel for VEM-SSM -----
-    if not args.skip_loco:
-        print("[LOCO] running VEM-SSM refits per excluded TV covariate ...")
-        base_cfg = ARDSConfig(
-            csv_path=args.csv, n_bins=args.n_bins, max_t=args.max_t,
+    if args.skip_loco:
+        md_path = args.out_dir / "table3_sensitivity.md"
+        md_path.write_text("\n".join(out_lines), encoding="utf-8")
+        print(f"Wrote {md_path} (Panel A only; LOCO skipped)")
+        return
+
+    print("[LOCO] running VEM-SSM refits per excluded covariate / group ...")
+    base_cfg = ARDSConfig(
+        csv_path=args.csv, n_bins=args.n_bins, max_t=args.max_t,
+    )
+
+    def factory():
+        return VEMSSMBenchmark(VEMConfig(training=TrainingConfig(
+            n_epochs=args.vem_epochs, learning_rate=1e-2, n_mc_samples=4,
+        )))
+
+    loco = run_loco(
+        method_factory=factory,
+        base_cfg=base_cfg,
+        target_bins=target_bins,
+        n_bootstrap=args.n_bootstrap,
+        seed=args.seed,
+        refit=False,
+        tv_cols=tuple(TV_COLS),
+        static_cols=tuple(STATIC_COLS),
+        groups=CLINICAL_GROUPS,
+    )
+
+    flat: dict[str, np.ndarray] = {}
+    for col, res in loco.by_excluded_tv.items():
+        flat[f"loco_tv__{col}__risk_mean"] = res.risk_mean
+        flat[f"loco_tv__{col}__risk_ci_low"] = res.risk_ci_low
+        flat[f"loco_tv__{col}__risk_ci_high"] = res.risk_ci_high
+    for col, res in loco.by_excluded_static.items():
+        flat[f"loco_static__{col}__risk_mean"] = res.risk_mean
+        flat[f"loco_static__{col}__risk_ci_low"] = res.risk_ci_low
+        flat[f"loco_static__{col}__risk_ci_high"] = res.risk_ci_high
+    for label, res in loco.by_excluded_group.items():
+        safe = label.replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")
+        flat[f"group__{safe}__risk_mean"] = res.risk_mean
+        flat[f"group__{safe}__risk_ci_low"] = res.risk_ci_low
+        flat[f"group__{safe}__risk_ci_high"] = res.risk_ci_high
+    np.savez(args.out_dir / "table3_loco.npz", **flat)
+
+    full_vem = z["vem_ssm__risk_mean"]
+
+    def _stack_means(d: dict) -> tuple[np.ndarray, list[str]]:
+        labels = list(d.keys())
+        if not labels:
+            return np.zeros((0, K)), []
+        return np.stack([d[k].risk_mean for k in labels], axis=0), labels
+
+    tv_means, tv_labels = _stack_means(loco.by_excluded_tv)
+    static_means, static_labels = _stack_means(loco.by_excluded_static)
+    group_means, group_labels = _stack_means(loco.by_excluded_group)
+
+    out_lines += [
+        "",
+        "## Panel B. VEM-SSM LOCO + grouped exclusion sensitivity",
+        "",
+        f"_VEM-SSM refit excluding (i) each of {len(tv_labels)} TV covariates, "
+        f"(ii) each of {len(static_labels)} static covariates, "
+        f"(iii) {len(group_labels)} clinical-scenario groups. "
+        f"Per-bin range = [min, max] of point-estimate 28-day risk across refits "
+        f"vs full-covariate primary._",
+        "",
+        "| MP bin | Center (J/min) | Full primary (%) | TV LOCO range (%) | Static LOCO range (%) | Grouped exclusion range (%) |",
+        "|---|---|---|---|---|---|",
+    ]
+    for k in target_bins:
+        c = f"{centers[k]:.1f}" if np.isfinite(centers[k]) else "-"
+        full = f"{full_vem[k] * 100:.1f}"
+        tv_rng = (
+            f"[{tv_means[:, k].min() * 100:.1f}, {tv_means[:, k].max() * 100:.1f}]"
+            if len(tv_labels) else "—"
         )
-
-        def factory():
-            return VEMSSMBenchmark(VEMConfig(training=TrainingConfig(
-                n_epochs=args.vem_epochs, learning_rate=1e-2, n_mc_samples=4,
-            )))
-
-        loco = run_loco(
-            method_factory=factory,
-            base_cfg=base_cfg,
-            target_bins=list(target_bins),
-            n_bootstrap=args.n_bootstrap,
-            seed=args.seed,
-            refit=False,
-            tv_cols=tuple(TV_COLS),
-            static_cols=(),
+        st_rng = (
+            f"[{static_means[:, k].min() * 100:.1f}, {static_means[:, k].max() * 100:.1f}]"
+            if len(static_labels) else "—"
         )
-        # Save raw arrays for downstream inspection.
-        flat = {}
-        for col, res in loco.by_excluded_tv.items():
-            flat[f"loco_tv__{col}__risk_mean"] = res.risk_mean
-            flat[f"loco_tv__{col}__risk_ci_low"] = res.risk_ci_low
-            flat[f"loco_tv__{col}__risk_ci_high"] = res.risk_ci_high
-        np.savez(args.out_dir / "table3_loco.npz", **flat)
+        gr_rng = (
+            f"[{group_means[:, k].min() * 100:.1f}, {group_means[:, k].max() * 100:.1f}]"
+            if len(group_labels) else "—"
+        )
+        out_lines.append(f"| {k} | {c} | {full} | {tv_rng} | {st_rng} | {gr_rng} |")
 
-        # Range of risk_mean across LOCO refits per bin.
-        means = np.stack([
-            res.risk_mean for res in loco.by_excluded_tv.values()
-        ])  # (n_tv, K)
-        loco_lo = means.min(axis=0)
-        loco_hi = means.max(axis=0)
-        full = z["vem_ssm__risk_mean"]
-
-        out_lines += [
-            "",
-            "## Panel B. LOCO sensitivity for VEM-SSM (TV covariate exclusion)",
-            "",
-            f"_VEM-SSM refit excluding each of {len(loco.by_excluded_tv)} TV covariates "
-            f"({', '.join(loco.by_excluded_tv.keys())}). Reports range of point-estimate "
-            f"28-day risk per bin across refits, vs full-covariate primary._",
-            "",
-            "| MP bin | Center (J/min) | Full primary (%) | LOCO range (%) |",
-            "|---|---|---|---|",
-        ]
-        for k in target_bins:
-            c = f"{centers[k]:.1f}" if np.isfinite(centers[k]) else "-"
-            out_lines.append(
-                f"| {k} | {c} | {full[k] * 100:.1f} | "
-                f"[{loco_lo[k] * 100:.1f}, {loco_hi[k] * 100:.1f}] |"
-            )
+    out_lines += [
+        "",
+        "### Panel B detail — per-exclusion VEM-SSM risk at reference bin and high bin",
+        "",
+        f"_Reference bin {ref_bin}, max bin {K - 1}. Reports per-refit risk to identify "
+        f"which exclusions, if any, drive non-trivial change._",
+        "",
+        "| Exclusion | Type | Risk @ ref bin (%) | Risk @ max bin (%) |",
+        "|---|---|---|---|",
+        f"| (full covariate primary) | — | "
+        f"{full_vem[ref_bin] * 100:.1f} | {full_vem[-1] * 100:.1f} |",
+    ]
+    for label, res in loco.by_excluded_tv.items():
+        out_lines.append(
+            f"| {label} | TV | "
+            f"{res.risk_mean[ref_bin] * 100:.1f} | {res.risk_mean[-1] * 100:.1f} |"
+        )
+    for label, res in loco.by_excluded_static.items():
+        out_lines.append(
+            f"| {label} | Static | "
+            f"{res.risk_mean[ref_bin] * 100:.1f} | {res.risk_mean[-1] * 100:.1f} |"
+        )
+    for label, res in loco.by_excluded_group.items():
+        out_lines.append(
+            f"| {label} | Group | "
+            f"{res.risk_mean[ref_bin] * 100:.1f} | {res.risk_mean[-1] * 100:.1f} |"
+        )
 
     md_path = args.out_dir / "table3_sensitivity.md"
     md_path.write_text("\n".join(out_lines), encoding="utf-8")
