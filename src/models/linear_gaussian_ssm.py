@@ -18,7 +18,7 @@ class SSMConfig:
     fit_time_effect: bool = True
     init_psi: float = 0.5
     init_log_sigma_Z: float = -2.0
-    init_beta_0: float = -4.5
+    init_beta_0: float = -3.0
     init_beta_Z: float = 0.3
 
 

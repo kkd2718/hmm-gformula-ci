@@ -1,4 +1,17 @@
-"""Monte Carlo g-formula simulation under a fixed intervention regime."""
+"""Monte Carlo g-formula simulation under a fixed intervention regime.
+
+Notes
+-----
+Intervention scope: only the treatment one-hot A_t is overwritten with the
+counterfactual bin. Observed time-varying covariates L_t are held at their
+factual trajectories. The latent state Z_t is resampled stochastically per
+the SSM transition. This differs from the classical Robins NICE g-formula
+(which simulates L_t under counterfactual A) and is justified here by the
+design choice that Z_t — not L_t — is the locus of unmeasured time-varying
+confounding adjustment in the proposed model. The Standard g-formula
+benchmark (`benchmarks.standard_gformula.StandardGFormula`) does perform
+classical L_t simulation as required by NICE (gfoRmula 2020).
+"""
 from __future__ import annotations
 from typing import Optional, Sequence
 
