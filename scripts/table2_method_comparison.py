@@ -61,6 +61,9 @@ def main() -> None:
                         help="Bootstrap reps for VEM-SSM (theta-fixed).")
     parser.add_argument("--xu-b-draws", type=int, default=200,
                         help="MC draws over b_i posterior for XuGLMM.")
+    parser.add_argument("--vem-refit", action="store_true",
+                        help="Use refit-bootstrap for VEM-SSM (symmetric with Std/Xu); "
+                             "expensive but methodologically symmetric.")
     parser.add_argument("--vem-epochs", type=int, default=200)
     parser.add_argument("--vem-lr", type=float, default=1e-2)
     parser.add_argument("--vem-mc", type=int, default=4)
@@ -118,18 +121,25 @@ def main() -> None:
         print(f"[xu_glmm] done")
 
     if "vem" not in args.skip:
-        print("[vem_ssm] fitting (theta on full cohort) ...")
         vem_cfg = VEMConfig(training=TrainingConfig(
             n_epochs=args.vem_epochs, learning_rate=args.vem_lr,
             n_mc_samples=args.vem_mc,
         ))
         m_vem = VEMSSMBenchmark(vem_cfg)
-        m_vem.fit(cohort)
-        print("[vem_ssm] dose-response (theta-fixed bootstrap) ...")
-        res_vem = m_vem.dose_response(
-            cohort, target_bins=target_bins,
-            n_bootstrap=args.n_bootstrap_vem, seed=args.seed + 2, refit=False,
-        )
+        if args.vem_refit:
+            print("[vem_ssm] dose-response (refit-bootstrap, symmetric with Std/Xu) ...")
+            res_vem = m_vem.dose_response(
+                cohort, target_bins=target_bins,
+                n_bootstrap=args.n_bootstrap_vem, seed=args.seed + 2, refit=True,
+            )
+        else:
+            print("[vem_ssm] fitting (theta on full cohort) ...")
+            m_vem.fit(cohort)
+            print("[vem_ssm] dose-response (theta-fixed bootstrap) ...")
+            res_vem = m_vem.dose_response(
+                cohort, target_bins=target_bins,
+                n_bootstrap=args.n_bootstrap_vem, seed=args.seed + 2, refit=False,
+            )
         results["vem_ssm"] = {
             "risk_mean": res_vem.risk_mean,
             "risk_ci_low": res_vem.risk_ci_low,
