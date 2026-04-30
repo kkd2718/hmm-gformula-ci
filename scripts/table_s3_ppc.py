@@ -38,14 +38,17 @@ def _train_test_indices(subject_ids: np.ndarray, test_frac: float, seed: int,
 @torch.no_grad()
 def _factual_hazards(model, posterior, cohort) -> np.ndarray:
     """Predict per-(stay,t) factual hazard P(Y_t=1 | observed history)."""
+    device = next(model.parameters()).device
+    drivers = cohort.drivers.to(device)
+    covariates = cohort.covariates.to(device)
+    Y = cohort.Y.to(device)
     Z, mu, logvar = posterior.sample_trajectory(
-        drivers=cohort.drivers, covariates=cohort.covariates,
-        Y=cohort.Y, n_samples=4,
+        drivers=drivers, covariates=covariates, Y=Y, n_samples=4,
     )
     Z_mean = Z.mean(dim=0)                                # (N, T, 1)
     N, T, _ = Z_mean.shape
     Z_flat = Z_mean.reshape(N * T, 1)
-    cov_flat = cohort.covariates.reshape(N * T, -1)
+    cov_flat = covariates.reshape(N * T, -1)
     logit = model.outcome_logit(Z_flat, cov_flat).reshape(N, T)
     return torch.sigmoid(logit).cpu().numpy()
 
