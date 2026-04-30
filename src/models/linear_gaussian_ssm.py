@@ -10,9 +10,14 @@ Option A drops γ_A·A_{t-1} from equation (1): Z_t becomes exogenous to treatme
 Both options share equations (2) and (3) with Standard NICE g-formula structure.
 
 Generalization of Xu (2024):
-    Setting ψ=1 and γ_A=γ_L=0 reduces (1) to Z_t = γ_V·V + ε_Z, i.e. a
-    random intercept with variance σ_Z² that does not change with time —
-    exactly Xu's b_i ~ N(0, σ_b²) up to reparameterization.
+    Xu's GLMM has a time-fixed random intercept b_i ~ N(0, σ_b²). Our
+    SSM recovers it in the limit ψ=0, γ_L=γ_A=0, σ_Z=σ_b — eq (1) becomes
+    Z_t = γ_V·V + ε_Z, i.i.d. across t. Xu's restriction "b_i constant
+    across t" requires zero innovation variance along with that limit;
+    in the more general SSM we let the variance carry across t to allow
+    smooth temporal evolution. Setting ψ=1 with γ_A=γ_L=0 yields a random
+    walk (NOT a random intercept), so the spec is strictly more flexible
+    than Xu and only equals Xu under the σ_Z→0 deterministic limit.
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -204,7 +209,12 @@ class LinearGaussianSSM(BaseLatentSSM):
         return mu0, var0.expand(n_samples, 1).to(device)
 
     # --------------------------------------------------------------------
-    # Smoothness penalty on β_A (and γ_A if option B)
+    # Smoothness penalty on bin-indexed coefficients
+    # ------------------------
+    # Applied uniformly to β_A (outcome direct), γ_A (Z dynamics; option B
+    # only), and δ_A (L emission). Treatment bins are ordinal, so bin-adjacent
+    # coefficients should be smooth in all three slots — anything else creates
+    # an inconsistency where one slot can absorb noisy bin contrasts.
     # --------------------------------------------------------------------
     def smoothness_penalty(self) -> Tensor:
         diffs_b = self.beta_A[1:] - self.beta_A[:-1]
@@ -212,4 +222,9 @@ class LinearGaussianSSM(BaseLatentSSM):
         if self.config.z_depends_on_treatment_lag:
             diffs_g = self.gamma_A[1:] - self.gamma_A[:-1]
             pen = pen + (diffs_g ** 2).sum()
+        if self.delta_A is not None:
+            # delta_A.weight has shape (p_dyn, K); penalty along K (bin) axis
+            W = self.delta_A.weight
+            diffs_d = W[:, 1:] - W[:, :-1]
+            pen = pen + (diffs_d ** 2).sum()
         return pen

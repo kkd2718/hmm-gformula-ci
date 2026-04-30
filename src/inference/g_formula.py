@@ -82,11 +82,13 @@ def simulate_g_formula(
             if p_dyn > 0:
                 L_mean, L_var = model.l_emission(Z, A_lag, L_lag, V)
                 if sample_L:
-                    L_t = L_mean + torch.sqrt(L_var) * torch.randn(
+                    L_new = L_mean + torch.sqrt(L_var) * torch.randn(
                         L_mean.shape, generator=gen, device=device
                     )
                 else:
-                    L_t = L_mean
+                    L_new = L_mean
+                # Symmetric absorbing convention: freeze L for event-experienced subjects
+                L_t = survived * L_new + (1.0 - survived) * L_t
         else:
             # t = 0: Z_0 already drawn; L_0 from observed baseline; no A_lag/L_lag
             pass

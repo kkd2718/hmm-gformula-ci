@@ -70,6 +70,13 @@ def train_vem(
             smoothness_lambda=config.smoothness_lambda,
         )
         loss = -result.elbo
+        if not torch.isfinite(loss):
+            raise RuntimeError(
+                f"Non-finite loss at epoch {epoch + 1} (loss={loss.item()}); "
+                f"ELBO components: ll_Y={result.expected_log_lik_y.item():.2f}, "
+                f"ll_L={result.expected_log_lik_l.item():.2f}, "
+                f"KL={result.kl_dynamics.item():.2f}. Aborting training."
+            )
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, max_norm=config.grad_clip)
         optimizer.step()

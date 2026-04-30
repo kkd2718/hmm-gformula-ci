@@ -126,6 +126,20 @@ def main() -> None:
             n_mc_samples=args.vem_mc,
         ))
         m_vem = VEMSSMBenchmark(vem_cfg)
+        # Pre-fit on full cohort (always) to have a parameter snapshot for diagnostics.
+        if not args.vem_refit:
+            print("[vem_ssm] fitting (theta on full cohort) ...")
+            m_vem.fit(cohort)
+        else:
+            # For refit-bootstrap, still do an initial fit so we can save snapshot.
+            m_vem.fit(cohort)
+        param_snap = m_vem.fitted_param_snapshot()
+        import json as _json
+        (args.out_dir / "vem_param_snapshot.json").write_text(
+            _json.dumps(param_snap, indent=2), encoding="utf-8",
+        )
+        print(f"[vem_ssm] saved parameter snapshot")
+
         if args.vem_refit:
             print("[vem_ssm] dose-response (refit-bootstrap, symmetric with Std/Xu) ...")
             res_vem = m_vem.dose_response(
@@ -133,8 +147,6 @@ def main() -> None:
                 n_bootstrap=args.n_bootstrap_vem, seed=args.seed + 2, refit=True,
             )
         else:
-            print("[vem_ssm] fitting (theta on full cohort) ...")
-            m_vem.fit(cohort)
             print("[vem_ssm] dose-response (theta-fixed bootstrap) ...")
             res_vem = m_vem.dose_response(
                 cohort, target_bins=target_bins,

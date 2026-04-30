@@ -69,6 +69,30 @@ class VEMSSMBenchmark(BenchmarkMethod):
             config=self.config.training, verbose=False,
         )
 
+    def fitted_param_snapshot(self) -> dict:
+        """Return numpy snapshot of identifiable bin-indexed and SSM parameters
+        for post-hoc diagnostics (collapsed / explosive coefficient detection)."""
+        if self._model is None:
+            return {}
+        m = self._model
+        snap = {
+            "psi": float(m.psi.detach().cpu()),
+            "sigma_Z": float(m.sigma_Z.detach().cpu()),
+            "beta_0": float(m.beta_0_param.detach().cpu()),
+            "beta_Z": float(m.beta_Z.detach().cpu()),
+            "beta_A": m.beta_A.detach().cpu().numpy().tolist(),
+            "gamma_A": m.gamma_A.detach().cpu().numpy().tolist(),
+        }
+        if m.delta_Z is not None:
+            snap["delta_Z"] = m.delta_Z.detach().cpu().numpy().tolist()
+        if m.alpha_L is not None:
+            snap["alpha_L"] = m.alpha_L.detach().cpu().numpy().tolist()
+        if m.delta_A is not None:
+            snap["delta_A"] = m.delta_A.weight.detach().cpu().numpy().tolist()
+        if m.sigma_L is not None:
+            snap["sigma_L"] = m.sigma_L.detach().cpu().numpy().tolist()
+        return snap
+
     def dose_response(
         self, cohort: ARDSCohort, target_bins: Sequence[int],
         n_bootstrap: int = 100, seed: int = 0, refit: bool = False,
