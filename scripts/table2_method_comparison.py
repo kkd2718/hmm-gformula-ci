@@ -64,6 +64,9 @@ def main() -> None:
     parser.add_argument("--vem-refit", action="store_true",
                         help="Use refit-bootstrap for VEM-SSM (symmetric with Std/Xu); "
                              "expensive but methodologically symmetric.")
+    parser.add_argument("--vem-z-lag-treatment", action="store_true",
+                        help="Option B: include A_{t-1} -> Z_t edge in VEM-SSM. "
+                             "Default (False) is Option A: Z exogenous to treatment.")
     parser.add_argument("--vem-epochs", type=int, default=200)
     parser.add_argument("--vem-lr", type=float, default=1e-2)
     parser.add_argument("--vem-mc", type=int, default=4)
@@ -121,10 +124,13 @@ def main() -> None:
         print(f"[xu_glmm] done")
 
     if "vem" not in args.skip:
-        vem_cfg = VEMConfig(training=TrainingConfig(
-            n_epochs=args.vem_epochs, learning_rate=args.vem_lr,
-            n_mc_samples=args.vem_mc,
-        ))
+        vem_cfg = VEMConfig(
+            training=TrainingConfig(
+                n_epochs=args.vem_epochs, learning_rate=args.vem_lr,
+                n_mc_samples=args.vem_mc,
+            ),
+            z_depends_on_treatment_lag=args.vem_z_lag_treatment,
+        )
         m_vem = VEMSSMBenchmark(vem_cfg)
         # Pre-fit on full cohort (always) to have a parameter snapshot for diagnostics.
         if not args.vem_refit:

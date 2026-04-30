@@ -82,6 +82,8 @@ def main() -> None:
     parser.add_argument("--n-bins", type=int, default=20)
     parser.add_argument("--max-t", type=int, default=28)
     parser.add_argument("--vem-epochs", type=int, default=200)
+    parser.add_argument("--vem-z-lag-treatment", action="store_true",
+                        help="Option B: A_{t-1} -> Z_t edge in VEM dynamics.")
     parser.add_argument("--n-bootstrap", type=int, default=50)
     parser.add_argument("--min-n", type=int, default=200)
     args = parser.parse_args()
@@ -99,9 +101,12 @@ def main() -> None:
     rd_records = []
 
     def _factory():
-        return VEMSSMBenchmark(VEMConfig(training=TrainingConfig(
-            n_epochs=args.vem_epochs, learning_rate=1e-2, n_mc_samples=4,
-        )))
+        return VEMSSMBenchmark(VEMConfig(
+            training=TrainingConfig(
+                n_epochs=args.vem_epochs, learning_rate=1e-2, n_mc_samples=4,
+            ),
+            z_depends_on_treatment_lag=args.vem_z_lag_treatment,
+        ))
 
     for label, mask in masks.items():
         idx = np.where(mask)[0]
