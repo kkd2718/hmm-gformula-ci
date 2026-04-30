@@ -20,7 +20,7 @@ def _toy_cohort(N=20, T=6, K=3, p_dyn=2, p_stat=1, seed=0) -> ARDSCohort:
     L_dyn = torch.randn(N, T, p_dyn) * 0.5
     C_static = torch.randn(N, p_stat) * 0.5
     at_risk = torch.ones(N, T, 1)
-    t_norm = (torch.arange(T).float() / max(T - 1, 1))[None, :, None].expand(N, T, 1)
+    t_norm = (torch.arange(T).float() / max(T - 1, 1))[None, :, None].expand(N, T, 1).contiguous()
     C_broadcast = C_static.unsqueeze(1).expand(-1, T, -1)
     drivers = torch.cat([A_bin, L_dyn, C_broadcast], dim=-1)
     covariates = torch.cat([drivers, t_norm], dim=-1)

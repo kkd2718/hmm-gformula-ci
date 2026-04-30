@@ -1,16 +1,12 @@
-"""Monte Carlo g-formula simulation under a fixed intervention regime.
+"""Monte Carlo g-formula simulation for VEM-SSM (NICE algorithm).
 
-Notes
------
-Intervention scope: only the treatment one-hot A_t is overwritten with the
-counterfactual bin. Observed time-varying covariates L_t are held at their
-factual trajectories. The latent state Z_t is resampled stochastically per
-the SSM transition. This differs from the classical Robins NICE g-formula
-(which simulates L_t under counterfactual A) and is justified here by the
-design choice that Z_t — not L_t — is the locus of unmeasured time-varying
-confounding adjustment in the proposed model. The Standard g-formula
-benchmark (`benchmarks.standard_gformula.StandardGFormula`) does perform
-classical L_t simulation as required by NICE (gfoRmula 2020).
+Per Robins (1986) NICE form, all three time-varying quantities are simulated
+forward under the counterfactual intervention A_t = a:
+    Z_t  ~ p(Z_t | Z_{t-1}, A_{t-1}=a, L_{t-1}, V)       (option B uses A_lag)
+    L_t  ~ p(L_t | Z_t, A_{t-1}=a, L_{t-1}, V)
+    Y_t  ~ Bernoulli( logit( ... | Z_t, A_t=a, L_t, V, t ) )
+After the per-subject event the Z trajectory is frozen (absorbing convention)
+and survival probability decays multiplicatively.
 """
 from __future__ import annotations
 from typing import Optional, Sequence
@@ -19,124 +15,99 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from ..models.base import BaseLatentSSM
+from ..models.linear_gaussian_ssm import LinearGaussianSSM
 
 
 @torch.no_grad()
 def simulate_g_formula(
-    model: BaseLatentSSM,
-    bootstrap_drivers: Tensor,
-    bootstrap_covariates: Tensor,
+    model: LinearGaussianSSM,
+    A_baseline: Tensor,                 # (M, T, K) — baseline A_t for all t (overridden by intervene_bin)
+    L_baseline_t0: Tensor,              # (M, p_dyn) — baseline L_0 from observed empirical
+    V: Tensor,                          # (M, p_static)
+    t_norm: Tensor,                     # (M, T, 1)
     intervene_bin: int,
     n_bins: int,
-    bin_slice: slice,
-    C_static: Optional[Tensor] = None,
     sample_Z: bool = True,
+    sample_L: bool = True,
     seed: Optional[int] = None,
 ) -> dict:
-    """Forward-simulate Z and Y under A_t = intervene_bin for all t.
+    """Forward-simulate (Z, L, Y) under counterfactual A_t = intervene_bin.
 
-    Returns dict with 'Z', 'prob_Y', 'cumulative_risk', 'marginal_risk_T'.
-    Latent state is frozen after the per-subject event (absorbing convention).
+    Uses the empirical baseline (V, L_0) drawn by the caller; everything else
+    is simulated from the fitted SSM equations.
     """
     gen = (
-        torch.Generator(device=bootstrap_drivers.device).manual_seed(seed)
+        torch.Generator(device=A_baseline.device).manual_seed(seed)
         if seed is not None else None
     )
-    M, T, _ = bootstrap_drivers.shape
-    device = bootstrap_drivers.device
+    M, T, _ = A_baseline.shape
+    device = A_baseline.device
+    p_dyn = L_baseline_t0.shape[-1]
 
     one_hot = torch.zeros(n_bins, device=device)
     one_hot[intervene_bin] = 1.0
-    drivers = bootstrap_drivers.clone()
-    covariates = bootstrap_covariates.clone()
-    drivers[:, :, bin_slice] = one_hot
-    covariates[:, :, bin_slice] = one_hot
+    A_cf = one_hot.unsqueeze(0).unsqueeze(0).expand(M, T, n_bins).clone()
 
-    Z_mean, Z_var = model.initial_state(M, device, C_static=C_static)
-    Z = (
-        Z_mean + torch.sqrt(Z_var) * torch.randn(Z_mean.shape, generator=gen, device=device)
-        if sample_Z else Z_mean
-    )
+    # Initial state
+    Z_mean, Z_var = model.initial_state(V, M, device)
+    if sample_Z:
+        Z = Z_mean + torch.sqrt(Z_var) * torch.randn(
+            Z_mean.shape, generator=gen, device=device
+        )
+    else:
+        Z = Z_mean
+    L_t = L_baseline_t0.clone()
 
-    Z_path, prob_path, cum_path = [], [], []
+    Z_path, L_path, prob_path, cum_path = [], [], [], []
     survived = torch.ones(M, 1, device=device)
     cumulative = torch.zeros(M, 1, device=device)
+    zeros_A = A_cf.new_zeros((M, n_bins))
+    zeros_L = L_t.new_zeros((M, p_dyn)) if p_dyn > 0 else L_t.new_zeros((M, 0))
 
     for t in range(T):
-        Z_next_mean, Z_var_add = model.transition(Z, drivers[:, t, :])
-        Z_new = (
-            Z_next_mean + torch.sqrt(Z_var_add) * torch.randn(
-                Z_next_mean.shape, generator=gen, device=device
-            )
-            if sample_Z else Z_next_mean
+        if t > 0:
+            # Z_t ~ p(Z_t | Z_{t-1}, A_{t-1}=a, L_{t-1}, V)
+            A_lag = A_cf[:, t - 1, :]
+            L_lag = L_t  # value of L_{t-1} from the previous iteration
+            Z_next_mean, Z_var_add = model.transition(Z, A_lag, L_lag, V)
+            if sample_Z:
+                Z_new = Z_next_mean + torch.sqrt(Z_var_add) * torch.randn(
+                    Z_next_mean.shape, generator=gen, device=device
+                )
+            else:
+                Z_new = Z_next_mean
+            # Freeze Z for absorbed (event-experienced) subjects
+            Z = survived * Z_new + (1.0 - survived) * Z
+            # L_t ~ p(L_t | Z_t, A_{t-1}=a, L_{t-1}, V)
+            if p_dyn > 0:
+                L_mean, L_var = model.l_emission(Z, A_lag, L_lag, V)
+                if sample_L:
+                    L_t = L_mean + torch.sqrt(L_var) * torch.randn(
+                        L_mean.shape, generator=gen, device=device
+                    )
+                else:
+                    L_t = L_mean
+        else:
+            # t = 0: Z_0 already drawn; L_0 from observed baseline; no A_lag/L_lag
+            pass
+
+        logit = model.outcome_logit(
+            Z, A_cf[:, t, :], L_t, V, t_norm[:, t, :],
         )
-        Z = survived * Z_new + (1.0 - survived) * Z
-        logit = model.outcome_logit(Z, covariates[:, t, :])
         p_Y = torch.sigmoid(logit)
         new_event = survived * p_Y
         cumulative = cumulative + new_event
         survived = survived * (1.0 - p_Y)
+
         Z_path.append(Z)
+        L_path.append(L_t)
         prob_path.append(p_Y)
         cum_path.append(cumulative.clone())
 
     return {
         "Z": torch.stack(Z_path, dim=1),
+        "L": torch.stack(L_path, dim=1),
         "prob_Y": torch.stack(prob_path, dim=1),
         "cumulative_risk": torch.stack(cum_path, dim=1),
         "marginal_risk_T": cumulative.mean(),
-    }
-
-
-def _patient_cluster_bootstrap_idx(
-    subject_ids: np.ndarray, rng: np.random.Generator,
-) -> np.ndarray:
-    """Cluster bootstrap on subject_id: resample patients then take all stays."""
-    unique_patients, inverse = np.unique(subject_ids, return_inverse=True)
-    sampled = rng.integers(0, len(unique_patients), size=len(unique_patients))
-    return np.concatenate([np.where(inverse == p)[0] for p in sampled])
-
-
-def dose_response_curve(
-    model: BaseLatentSSM,
-    bootstrap_drivers: Tensor,
-    bootstrap_covariates: Tensor,
-    n_bins: int,
-    bin_slice: slice,
-    target_bins: Sequence[int],
-    subject_ids: np.ndarray,
-    C_static: Optional[Tensor] = None,
-    n_bootstrap: int = 100,
-    sample_Z: bool = True,
-    seed: int = 0,
-) -> dict:
-    """Sweep intervene_bin to build a dose-response curve with cluster bootstrap CIs."""
-    rng = np.random.default_rng(seed)
-    risks_per_bin: list[list[float]] = []
-    for k in target_bins:
-        boot = []
-        for _ in range(n_bootstrap):
-            idx_np = _patient_cluster_bootstrap_idx(subject_ids, rng)
-            idx = torch.as_tensor(idx_np, dtype=torch.long, device=bootstrap_drivers.device)
-            res = simulate_g_formula(
-                model=model,
-                bootstrap_drivers=bootstrap_drivers[idx],
-                bootstrap_covariates=bootstrap_covariates[idx],
-                intervene_bin=k,
-                n_bins=n_bins,
-                bin_slice=bin_slice,
-                C_static=C_static[idx] if C_static is not None else None,
-                sample_Z=sample_Z,
-                seed=int(rng.integers(0, 2**31 - 1)),
-            )
-            boot.append(float(res["marginal_risk_T"].cpu()))
-        risks_per_bin.append(boot)
-    risk_mat = torch.tensor(risks_per_bin)
-    return {
-        "bins": list(target_bins),
-        "risk_mean": risk_mat.mean(dim=1),
-        "risk_ci_low": risk_mat.quantile(0.025, dim=1),
-        "risk_ci_high": risk_mat.quantile(0.975, dim=1),
-        "risk_raw": risk_mat,
     }

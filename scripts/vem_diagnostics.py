@@ -53,19 +53,23 @@ def _train_test_indices(subject_ids: np.ndarray, test_frac: float, seed: int):
 @torch.no_grad()
 def _factual_brier(model, posterior, cohort) -> float:
     """Average Brier score across (stay, t) where at_risk=1, using posterior mean Z."""
-    Z, _, _ = posterior.sample_trajectory(
-        drivers=cohort.drivers, covariates=cohort.covariates,
-        Y=cohort.Y, n_samples=4,
-    )
+    device = next(model.parameters()).device
+    A = cohort.A_bin.to(device)
+    L = cohort.L_dyn.to(device)
+    V = cohort.C_static.to(device)
+    Y_dev = cohort.Y.to(device)
+    t_norm = cohort.t_norm.to(device)
+    Z, _, _ = posterior.sample_trajectory(A=A, L=L, V=V, Y=Y_dev, n_samples=4)
     Z_mean = Z.mean(dim=0)
     N, T, _ = Z_mean.shape
     Z_flat = Z_mean.reshape(N * T, 1)
-    cov_flat = cohort.covariates.reshape(N * T, -1)
-    p = torch.sigmoid(
-        model.outcome_logit(Z_flat, cov_flat).reshape(N, T)
-    )
-    Y = cohort.Y.squeeze(-1)
-    M = cohort.at_risk.squeeze(-1)
+    A_flat = A.reshape(N * T, -1)
+    L_flat = L.reshape(N * T, -1)
+    V_rep = V.unsqueeze(1).expand(N, T, V.shape[-1]).reshape(N * T, -1)
+    t_flat = t_norm.reshape(N * T, 1)
+    p = torch.sigmoid(model.outcome_logit(Z_flat, A_flat, L_flat, V_rep, t_flat).reshape(N, T))
+    Y = Y_dev.squeeze(-1)
+    M = cohort.at_risk.to(device).squeeze(-1)
     se = ((p - Y) ** 2) * M
     return float(se.sum() / max(M.sum().item(), 1.0))
 
@@ -135,23 +139,24 @@ def main() -> None:
     baseline_brier = _baseline_pooled_logistic_brier(train_cohort, test_cohort)
     print(f"[baseline] pooled-logistic test Brier = {baseline_brier:.5f}")
 
-    L = train_cohort.feature_layout
-    K = L["n_bins"]
-    p = K + L["n_dyn"] + L["n_static"]
+    layout = train_cohort.feature_layout
+    K = layout["n_bins"]
 
     histories: dict[float, dict] = {}
     summary_rows: list[list[str]] = []
     for init_b0 in args.init_beta_0_grid:
         ssm_cfg = SSMConfig(
-            n_bins=K, n_dyn_covariates=L["n_dyn"],
-            n_static_covariates=L["n_static"], fit_time_effect=True,
+            n_bins=K, n_dyn_covariates=layout["n_dyn"],
+            n_static_covariates=layout["n_static"], fit_time_effect=True,
             init_beta_0=init_b0,
         )
         torch.manual_seed(args.seed)
-        model = LinearGaussianSSM(ssm_cfg)
-        posterior = StructuredGaussianMarkovPosterior(
-            QConfig(n_drivers=p, n_covariates=p + 1)
-        )
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = LinearGaussianSSM(ssm_cfg).to(device)
+        posterior = StructuredGaussianMarkovPosterior(QConfig(
+            n_bins=K, n_dyn_covariates=layout["n_dyn"],
+            n_static_covariates=layout["n_static"],
+        )).to(device)
         tcfg = TrainingConfig(
             n_epochs=args.n_epochs, learning_rate=args.lr,
             n_mc_samples=args.n_mc, smoothness_lambda=args.smoothness,
@@ -161,9 +166,9 @@ def main() -> None:
         print(f"\n=== init_beta_0 = {init_b0:+.1f} ===")
         history = train_vem(
             model, posterior,
-            Y=train_cohort.Y, drivers=train_cohort.drivers,
-            covariates=train_cohort.covariates, at_risk=train_cohort.at_risk,
-            C_static=train_cohort.C_static, config=tcfg, verbose=True,
+            Y=train_cohort.Y, A=train_cohort.A_bin, L=train_cohort.L_dyn,
+            V=train_cohort.C_static, at_risk=train_cohort.at_risk,
+            t_norm=train_cohort.t_norm, config=tcfg, verbose=True,
         )
         plateau_t = _check_plateau(history.elbo, args.plateau_window, args.plateau_tol)
         try:
@@ -178,7 +183,8 @@ def main() -> None:
         passes_C3 = all(np.isfinite(history.elbo))
         histories[init_b0] = {
             "elbo": np.asarray(history.elbo),
-            "ell": np.asarray(history.expected_log_lik),
+            "ll_y": np.asarray(history.expected_log_lik_y),
+            "ll_l": np.asarray(history.expected_log_lik_l),
             "kl": np.asarray(history.kl),
             "test_brier": test_brier,
             "plateau_epoch": plateau_t if plateau_t is not None else -1,

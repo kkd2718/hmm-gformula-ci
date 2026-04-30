@@ -28,19 +28,21 @@ class TrainingConfig:
 class TrainingHistory:
     """ELBO trajectory and components recorded each epoch."""
     elbo: list[float]
-    expected_log_lik: list[float]
+    expected_log_lik_y: list[float]
+    expected_log_lik_l: list[float]
     kl: list[float]
 
 
 def train_vem(
     model: LinearGaussianSSM,
     posterior: StructuredGaussianMarkovPosterior,
-    Y: Tensor,
-    drivers: Tensor,
-    covariates: Tensor,
-    at_risk: Tensor,
+    Y: Tensor,                  # (N, T, 1)
+    A: Tensor,                  # (N, T, K)
+    L: Tensor,                  # (N, T, p_dyn)
+    V: Tensor,                  # (N, p_static)
+    at_risk: Tensor,            # (N, T, 1)
+    t_norm: Tensor,             # (N, T, 1)
     config: TrainingConfig,
-    C_static: Tensor | None = None,
     device: torch.device | None = None,
     verbose: bool = True,
 ) -> TrainingHistory:
@@ -49,25 +51,22 @@ def train_vem(
         device = next(model.parameters()).device
     model.to(device)
     posterior.to(device)
-    Y, drivers, covariates, at_risk = (
-        Y.to(device), drivers.to(device), covariates.to(device), at_risk.to(device),
-    )
-    if C_static is not None:
-        C_static = C_static.to(device)
+    Y = Y.to(device); A = A.to(device); L = L.to(device); V = V.to(device)
+    at_risk = at_risk.to(device); t_norm = t_norm.to(device)
 
     params: Iterable[Tensor] = list(model.parameters()) + list(posterior.parameters())
     optimizer = torch.optim.Adam(params, lr=config.learning_rate)
 
-    history = TrainingHistory(elbo=[], expected_log_lik=[], kl=[])
+    history = TrainingHistory(elbo=[], expected_log_lik_y=[], expected_log_lik_l=[], kl=[])
     best_elbo = -float("inf")
     epochs_no_improve = 0
 
     for epoch in range(config.n_epochs):
         optimizer.zero_grad()
         result: ELBOResult = compute_elbo(
-            model=model, posterior=posterior, Y=Y,
-            drivers=drivers, covariates=covariates, at_risk=at_risk,
-            C_static=C_static, n_samples=config.n_mc_samples,
+            model=model, posterior=posterior,
+            Y=Y, A=A, L=L, V=V, at_risk=at_risk, t_norm=t_norm,
+            n_samples=config.n_mc_samples,
             smoothness_lambda=config.smoothness_lambda,
         )
         loss = -result.elbo
@@ -77,7 +76,8 @@ def train_vem(
 
         elbo_val = float(result.elbo.detach().cpu())
         history.elbo.append(elbo_val)
-        history.expected_log_lik.append(float(result.expected_log_lik.cpu()))
+        history.expected_log_lik_y.append(float(result.expected_log_lik_y.cpu()))
+        history.expected_log_lik_l.append(float(result.expected_log_lik_l.cpu()))
         history.kl.append(float(result.kl_dynamics.cpu()))
 
         if elbo_val > best_elbo + config.early_stop_tol:
@@ -90,7 +90,9 @@ def train_vem(
             n_obs = max(result.n_observations, 1)
             print(
                 f"[epoch {epoch+1:4d}/{config.n_epochs}] "
-                f"ELBO={elbo_val:.2f}  per-obs={elbo_val / n_obs:.4f}"
+                f"ELBO={elbo_val:.2f}  per-obs={elbo_val / n_obs:.4f}  "
+                f"ll_Y={history.expected_log_lik_y[-1]:.1f}  ll_L={history.expected_log_lik_l[-1]:.1f}  "
+                f"KL={history.kl[-1]:.1f}"
             )
         if epochs_no_improve >= config.early_stop_patience:
             if verbose:

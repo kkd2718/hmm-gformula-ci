@@ -39,17 +39,20 @@ def _train_test_indices(subject_ids: np.ndarray, test_frac: float, seed: int,
 def _factual_hazards(model, posterior, cohort) -> np.ndarray:
     """Predict per-(stay,t) factual hazard P(Y_t=1 | observed history)."""
     device = next(model.parameters()).device
-    drivers = cohort.drivers.to(device)
-    covariates = cohort.covariates.to(device)
+    A = cohort.A_bin.to(device)
+    L = cohort.L_dyn.to(device)
+    V = cohort.C_static.to(device)
     Y = cohort.Y.to(device)
-    Z, mu, logvar = posterior.sample_trajectory(
-        drivers=drivers, covariates=covariates, Y=Y, n_samples=4,
-    )
+    t_norm = cohort.t_norm.to(device)
+    Z, _, _ = posterior.sample_trajectory(A=A, L=L, V=V, Y=Y, n_samples=4)
     Z_mean = Z.mean(dim=0)                                # (N, T, 1)
     N, T, _ = Z_mean.shape
     Z_flat = Z_mean.reshape(N * T, 1)
-    cov_flat = covariates.reshape(N * T, -1)
-    logit = model.outcome_logit(Z_flat, cov_flat).reshape(N, T)
+    A_flat = A.reshape(N * T, -1)
+    L_flat = L.reshape(N * T, -1)
+    V_rep = V.unsqueeze(1).expand(N, T, V.shape[-1]).reshape(N * T, -1)
+    t_flat = t_norm.reshape(N * T, 1)
+    logit = model.outcome_logit(Z_flat, A_flat, L_flat, V_rep, t_flat).reshape(N, T)
     return torch.sigmoid(logit).cpu().numpy()
 
 
