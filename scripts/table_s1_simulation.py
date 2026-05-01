@@ -113,6 +113,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--target-bins", type=int, nargs="+", default=None)
     parser.add_argument("--methods", nargs="+", default=["standard", "xu", "vem"])
+    parser.add_argument("--inner-bootstrap", type=int, default=2,
+                        help="Inner refit bootstrap iterations per replicate "
+                             "(needed for valid coverage; >=20 recommended).")
+    parser.add_argument("--inner-refit", action="store_true",
+                        help="Use refit=True for inner bootstrap (slower but "
+                             "valid coverage).")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
