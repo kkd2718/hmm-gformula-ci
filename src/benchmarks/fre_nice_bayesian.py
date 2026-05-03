@@ -218,19 +218,25 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
             group_idx=jnp.asarray(group_idx),
             n_groups=n_groups, K_re=K_re,
         )
-        samples = mcmc.get_samples()
+        samples_flat = mcmc.get_samples()
         self._posterior = {
-            "beta": np.asarray(samples["beta"]),         # (S, p)
-            "L_chol": np.asarray(samples["L_chol"]),     # (S, K_re, K_re)
-            "tau": np.asarray(samples["tau"]),           # (S, K_re)
+            "beta": np.asarray(samples_flat["beta"]),         # (S, p)
+            "L_chol": np.asarray(samples_flat["L_chol"]),     # (S, K_re, K_re)
+            "tau": np.asarray(samples_flat["tau"]),           # (S, K_re)
         }
         from numpyro.diagnostics import summary
-        diag = summary(samples, prob=0.95)
-        tau_diag = diag.get("tau", {})
+        try:
+            samples_chains = mcmc.get_samples(group_by_chain=True)
+            diag = summary(samples_chains, prob=0.95)
+            tau_diag = diag.get("tau", {})
+            rhat_arr = np.asarray(tau_diag.get("r_hat", np.array([np.nan])))
+            r_hat_max = float(rhat_arr.max())
+        except Exception:
+            r_hat_max = float("nan")
         print(
             f"  [FRE-NICE Bayesian fit] tau (per-basis-dim scale): "
             f"mean = {self._posterior['tau'].mean(axis=0)}, "
-            f"R-hat max = {tau_diag.get('r_hat', np.array([np.nan])).max():.3f}"
+            f"R-hat max = {r_hat_max:.3f}"
         )
 
     # ----- counterfactual forward sim -----

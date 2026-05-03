@@ -145,22 +145,26 @@ class XuGLMMBayesian(BenchmarkMethod):
             X=jnp.asarray(X), y=jnp.asarray(y), mask=jnp.asarray(m),
             group_idx=jnp.asarray(group_idx), n_groups=n_groups,
         )
-        # Extract posterior samples (concatenated across chains)
-        samples = mcmc.get_samples()
+        # Posterior samples (chain-flattened) for downstream MC
+        samples_flat = mcmc.get_samples()
         self._posterior = {
-            "beta": np.asarray(samples["beta"]),     # (S, p)
-            "sigma_b": np.asarray(samples["sigma_b"]),  # (S,)
+            "beta": np.asarray(samples_flat["beta"]),     # (S, p)
+            "sigma_b": np.asarray(samples_flat["sigma_b"]),  # (S,)
         }
-        # Convergence diagnostics
+        # Convergence diagnostics need chain dim — get_samples(group_by_chain=True)
         from numpyro.diagnostics import summary
-        diag = summary(samples, prob=0.95)
-        # Print only key parameters
-        sig_diag = diag.get("sigma_b", {})
+        try:
+            samples_chains = mcmc.get_samples(group_by_chain=True)
+            diag = summary(samples_chains, prob=0.95)
+            sig_diag = diag.get("sigma_b", {})
+            r_hat = float(sig_diag.get("r_hat", float("nan")))
+            n_eff = float(sig_diag.get("n_eff", float("nan")))
+        except Exception:
+            r_hat, n_eff = float("nan"), float("nan")
         print(
             f"  [Xu Bayesian fit] sigma_b posterior mean = "
             f"{self._posterior['sigma_b'].mean():.4f}, "
-            f"R-hat = {sig_diag.get('r_hat', float('nan')):.3f}, "
-            f"ESS = {sig_diag.get('n_eff', float('nan')):.0f}"
+            f"R-hat = {r_hat:.3f}, ESS = {n_eff:.0f}"
         )
 
     # ------------------------------------------------------------------
