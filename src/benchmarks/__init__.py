@@ -1,8 +1,9 @@
-"""Benchmark methods for the 3-way ARDS-MP causal comparison."""
+"""Benchmark methods for the 4-way ARDS-MP causal comparison."""
 from .base import BenchmarkMethod, DoseResponseResult, bin_centers_J_min
 from .standard_gformula import StandardGFormula
 from .xu_glmm import XuGLMM
 from .proposed import VEMSSMBenchmark, VEMConfig
+from .spline_glmm_nice import SplineGLMMNICEBenchmark, SplineGLMMNICEConfig
 
 __all__ = [
     "BenchmarkMethod",
@@ -12,4 +13,6 @@ __all__ = [
     "XuGLMM",
     "VEMSSMBenchmark",
     "VEMConfig",
+    "SplineGLMMNICEBenchmark",
+    "SplineGLMMNICEConfig",
 ]

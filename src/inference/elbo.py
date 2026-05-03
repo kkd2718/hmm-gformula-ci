@@ -66,8 +66,13 @@ def compute_elbo(
     t_norm: Tensor,                 # (N, T, 1) in [0, 1]
     n_samples: int = 4,
     smoothness_lambda: float = 0.0,
+    kl_weight: float = 1.0,         # NEW: KL annealing factor
 ) -> ELBOResult:
-    """Compute the ELBO and its components."""
+    """Compute the ELBO and its components.
+
+    kl_weight enables β-VAE style annealing to mitigate posterior collapse
+    early in training. With kl_weight = 1.0 the standard ELBO is recovered.
+    """
     N, T, _ = Y.shape
 
     Z_samples, q_means, q_log_vars = posterior.sample_trajectory(
@@ -139,7 +144,7 @@ def compute_elbo(
         kl_total = kl_total + kl_t_mc / n_samples
 
     pen = smoothness_lambda * model.smoothness_penalty()
-    elbo = expected_log_lik_y + expected_log_lik_l - kl_total - pen
+    elbo = expected_log_lik_y + expected_log_lik_l - kl_weight * kl_total - pen
 
     return ELBOResult(
         elbo=elbo,
