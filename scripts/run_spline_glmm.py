@@ -111,7 +111,7 @@ def main() -> None:
     )
 
     if "K1" in args.variants:
-        print("\n=== Method 3: Scalar-RE NICE g-formula (K=1) ===")
+        print("\n=== K=1 nested case (sanity check vs Xu 2024) ===")
         cfg_k1 = SplineGLMMNICEConfig(
             knots=(14.0,),                # single knot -> constant basis (K=1)
             n_b_draws=args.n_b_draws,
@@ -121,6 +121,7 @@ def main() -> None:
         result_k1 = bench_k1.dose_response(
             cohort, target_bins=target_bins,
             n_bootstrap=args.n_bootstrap, seed=args.seed, refit=True,
+            checkpoint_path=args.out_dir / "checkpoint_K1.npz",
         )
         _save_risks_npz(
             result_k1, args.out_dir / "spline_glmm_K1_risks.npz", "spline_glmm_K1",
@@ -128,11 +129,11 @@ def main() -> None:
         md.extend(_format_md_table(
             result_k1.bins, centers, result_k1.risk_mean,
             result_k1.risk_ci_low, result_k1.risk_ci_high,
-            ref_bin, "Method 3: Scalar-RE NICE (K=1)",
+            ref_bin, "K=1 nested case (scalar RE in NICE)",
         ))
 
     if "K5" in args.variants:
-        print("\n=== Method 4: Spline-RE NICE g-formula (K=5) ===")
+        print("\n=== Spline-RE NICE g-formula (K=5; primary proposed method) ===")
         cfg_k5 = SplineGLMMNICEConfig(
             knots=(0.0, 3.0, 7.0, 14.0, 21.0),
             n_b_draws=args.n_b_draws,
@@ -142,6 +143,7 @@ def main() -> None:
         result_k5 = bench_k5.dose_response(
             cohort, target_bins=target_bins,
             n_bootstrap=args.n_bootstrap, seed=args.seed + 1, refit=True,
+            checkpoint_path=args.out_dir / "checkpoint_K5.npz",
         )
         _save_risks_npz(
             result_k5, args.out_dir / "spline_glmm_K5_risks.npz", "spline_glmm_K5",
@@ -149,7 +151,7 @@ def main() -> None:
         md.extend(_format_md_table(
             result_k5.bins, centers, result_k5.risk_mean,
             result_k5.risk_ci_low, result_k5.risk_ci_high,
-            ref_bin, "Method 4: Spline-RE NICE (K=5, knots=[0,3,7,14,21])",
+            ref_bin, "Spline-RE NICE (K=5, knots=[0,3,7,14,21]) — primary",
         ))
 
     md_path = args.out_dir / "spline_glmm_summary.md"

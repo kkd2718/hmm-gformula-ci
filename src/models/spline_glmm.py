@@ -71,13 +71,17 @@ def natural_cubic_basis(knots: tuple[float, ...], t_grid: np.ndarray) -> np.ndar
 
     if K == 1:
         # Scalar random intercept (b_i(t) = b_i, time-invariant).
-        return np.ones((n, 1), dtype=np.float64)
+        # QR-normalize for consistency with K >= 3 path.
+        B = np.ones((n, 1), dtype=np.float64)
+        Q, _ = np.linalg.qr(B)
+        return Q
     if K == 2:
         # Linear basis: random intercept + random slope on time.
         B = np.zeros((n, 2), dtype=np.float64)
         B[:, 0] = 1.0
         B[:, 1] = t
-        return B
+        Q, _ = np.linalg.qr(B)
+        return Q
 
     t = np.asarray(t_grid, dtype=np.float64)
     n = len(t)
@@ -106,7 +110,14 @@ def natural_cubic_basis(knots: tuple[float, ...], t_grid: np.ndarray) -> np.ndar
     B[:, 1] = t
     for col, kk in enumerate(range(K - 2)):
         B[:, 2 + col] = d[:, kk] - d[:, K - 2]
-    return B
+    # QR-orthonormalize on the integer-day grid (S1 fix per Opus review).
+    # Truncated-power columns can reach values ~130 at t=14 with knots (0,3,7,14,21);
+    # combined with N(0, 0.1) Cholesky init this saturates the logit clamp.
+    # Orthonormalized basis has columns of unit norm on the grid, removes
+    # implicit basis-rotation residual invariance of Sigma_b, and stabilizes
+    # the per-subject Newton inner solver.
+    Q, _ = np.linalg.qr(B)
+    return Q
 
 
 @dataclass

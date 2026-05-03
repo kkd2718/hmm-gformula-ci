@@ -181,8 +181,11 @@ def laplace_marginal_logll(
     B_outer = model.B.unsqueeze(-1) * model.B.unsqueeze(-2)
     H_data = torch.einsum("nt,tkl->nkl", aw, B_outer)
     H = H_data + Sigma_inv.unsqueeze(0)
-    # Use stable Cholesky-based logdet
-    logdet_H = torch.logdet(H)                                 # (N,)
+    # Cholesky-based logdet (S7 fix per Opus review). torch.logdet on near-PSD
+    # batched matrices can silently return wrong sign / NaN; Cholesky on the
+    # symmetric positive-definite H is numerically stable and explicit.
+    L_H = torch.linalg.cholesky(H)
+    logdet_H = 2.0 * L_H.diagonal(dim1=-2, dim2=-1).log().sum(dim=-1)  # (N,)
 
     # Per-subject Laplace approx (constants -K/2 log(2pi) drop in optimization)
     # ell_i = cond_loglik_i - quad_i - 0.5 logdet_H_i - 0.5 logdet_Sigma_b

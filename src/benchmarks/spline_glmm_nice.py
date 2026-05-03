@@ -6,24 +6,25 @@ Combines:
 2. Spline-basis time-varying random effect on outcome — fitted via Laplace
    marginal likelihood (Pinheiro-Bates style hierarchical GLMM).
 
-K = 1 reduces to scalar random-intercept NICE g-formula (the existing
-"hierarchical g-computation" reference baseline; e.g., McCulloch 2008,
-Daniels-Hogan 2008 ch.11). K >= 3 uses natural cubic spline basis for
+K = 1 reduces to scalar random-intercept NICE g-formula (used as a nested
+sanity check vs Xu 2024). K >= 3 uses natural cubic spline basis for the
 time-varying RE (proposed extension).
 
-Counterfactual procedure
-------------------------
-For each MC draw m = 1, ..., M:
-  For each subject i:
-    Draw  b_i^(m) ~ N(0, Σ̂_b)        [K-dim multivariate normal]
-    L_{i,0}^* = L_{i,0}^obs (baseline kept, NICE convention)
-    Forward simulate L_{i,t}^* under intervention A^* via pooled L regressions
-    For t = 0, ..., T-1:
-      logit_t = β̂_0 + β̂_A^T a^*_t + η̂^T L_{i,t}^* + ξ̂^T V_i
-                  + b_i^(m) ⋅ B(t) + β̂_time · (t/(T-1))
-      cum_i^(m) += survived_i^(m) · sigmoid(logit_t);  survived *= 1 - sigmoid
+Counterfactual procedure (paired-RD safe)
+------------------------------------------
+For each bootstrap rep b = 1, ..., B:
+  Cluster-resample subjects, refit (warm-start from prior fit theta).
+  Pre-draw ONCE for this bootstrap:
+    idx0^(b)         ~ Uniform over resampled subjects (M baseline draws)
+    b_i^(b,m), m=1..M ~ N(0, Σ̂_b^(b))
+  For each target bin k:
+    Use SAME pre-drawn idx0^(b) and b_i^(b,m) to forward-simulate L^* and
+    accumulate hazard. This preserves bootstrap pairing across bins so that
+    risk-difference CIs are valid.
+  Checkpoint (rep, risk_mat) to disk after each bootstrap rep (preemption
+  resilience on preemptible GPU VM).
 
-R̂(a^*) = mean over (i, m) of cum_i^(m)
+R̂(a_k) = mean over (b, m) of cum_{b,m,k}
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -199,42 +200,44 @@ class SplineGLMMNICEBenchmark(BenchmarkMethod):
             self._B_basis = model.B.detach().cpu().numpy().astype(np.float64)
             self._L_chol_np = model.L_chol().detach().cpu().numpy().astype(np.float64)
 
-    # --------------------------- counterfactual ---------------------------
-    def _simulate_counterfactual_risk(
+    # --------------------------- counterfactual (paired-RNG safe) ---------------------------
+    def _simulate_counterfactual_risk_with_draws(
         self, cohort: ARDSCohort, intervene_bin: int,
-        rng: np.random.Generator,
-    ) -> np.ndarray:
-        """Per-subject 28-day cumulative incidence under A=intervene_bin."""
+        idx0: np.ndarray, b_draws: np.ndarray,
+        L_noise_seeds: np.ndarray,
+    ) -> float:
+        """Counterfactual mean cumulative incidence using PRE-DRAWN MC quantities.
+
+        Parameters
+        ----------
+        idx0       : (M,) baseline subject indices (shared across bins within this bootstrap)
+        b_draws    : (n_b_draws, M, K_re) pre-drawn random effects (shared across bins)
+        L_noise_seeds : (n_b_draws,) per-draw seed for L forward-simulation noise
+                        Pairing: same seed -> same L noise sequence per draw, ensuring
+                        identical L trajectories across bins for paired RD.
+        """
         K_A, p_dyn, p_stat, T = (
             self._n_bins, self._n_dyn, self._n_static, self._t_max,
         )
-        N_obs = cohort.L_dyn.shape[0]
-        M = self.config.n_mc_subjects or N_obs
+        M = idx0.shape[0]
+        n_b_draws = b_draws.shape[0]
 
         L_obs = cohort.L_dyn.numpy().astype(np.float64)
         C_obs = cohort.C_static.numpy().astype(np.float64)
 
-        # Sample baseline (L_0, C) from observed empirical distribution
-        idx0 = rng.integers(0, N_obs, size=M)
-        L_t = L_obs[idx0, 0, :].copy()
+        L_t0 = L_obs[idx0, 0, :].copy()
         C_mc = C_obs[idx0]
-
         A_onehot = np.zeros((M, K_A), dtype=np.float64)
         A_onehot[:, intervene_bin] = 1.0
 
-        # Average over n_b_draws of b_i ~ N(0, Σ̂_b)
         risks_per_draw = []
-        for _ in range(self.config.n_b_draws):
-            # Sample b_i for each MC subject (shape M, K_re)
-            K_re = self._B_basis.shape[1]
-            z = rng.standard_normal(size=(M, K_re))
-            # Sample x ~ N(0, Σ_b) via x = z @ L_chol.T  where Σ_b = L_chol L_chol^T
-            b = z @ self._L_chol_np.T
-            # b @ B(t)^T: shape (M, T) — random component per (subject, time)
-            random_logit_full = b @ self._B_basis.T   # (M, T)
+        for d in range(n_b_draws):
+            b = b_draws[d]                                    # (M, K_re)
+            random_logit_full = b @ self._B_basis.T           # (M, T)
+            # L noise RNG seeded per draw — same across bins so L paths align
+            l_rng = np.random.default_rng(int(L_noise_seeds[d]))
 
-            # Forward simulate L and accumulate hazard
-            L_cur = L_t.copy()
+            L_cur = L_t0.copy()
             survived = np.ones(M, dtype=np.float64)
             cum = np.zeros(M, dtype=np.float64)
 
@@ -246,9 +249,10 @@ class SplineGLMMNICEBenchmark(BenchmarkMethod):
                     L_new = np.empty_like(L_cur)
                     for j in range(p_dyn):
                         mu_j = X_hist @ self._beta_L[j]
-                        L_new[:, j] = mu_j + rng.normal(0.0, self._sd_L[j], size=M)
+                        L_new[:, j] = mu_j + l_rng.normal(
+                            0.0, self._sd_L[j], size=M,
+                        )
                     L_cur = L_new
-                # Outcome logit
                 eta_fix = self._beta_0 + (A_onehot * self._beta_A).sum(axis=-1)
                 if self._eta is not None and p_dyn > 0:
                     eta_fix = eta_fix + L_cur @ self._eta
@@ -261,27 +265,84 @@ class SplineGLMMNICEBenchmark(BenchmarkMethod):
                 survived = survived * (1.0 - p_t)
             risks_per_draw.append(cum)
 
-        return np.mean(np.stack(risks_per_draw, axis=0), axis=0)  # (M,)
+        return float(np.mean(np.stack(risks_per_draw, axis=0)))
 
+    # --------------------------- dose_response (paired + checkpointed) ---------------------------
     def dose_response(
         self, cohort: ARDSCohort, target_bins: Sequence[int],
         n_bootstrap: int = 100, seed: int = 0, refit: bool = True,
+        checkpoint_path: "Path | None" = None,
     ) -> DoseResponseResult:
+        """Cluster-bootstrap dose-response with paired-RD safety + checkpointing.
+
+        For each bootstrap rep:
+          - resample subjects, refit (warm-start from prior bootstrap fit if possible)
+          - pre-draw idx0 and b_i^(m) ONCE
+          - evaluate ALL bins under SAME draws -> paired RD valid
+
+        If `checkpoint_path` is given, save (rep, risk_mat[:, :rep]) after each
+        rep; on resume, load and continue from last completed rep.
+        """
+        from pathlib import Path  # local import for typing
+
         rng = np.random.default_rng(seed)
         if not refit and self._model is None:
             self.fit(cohort)
         K = len(target_bins)
         risk_mat = np.zeros((K, n_bootstrap), dtype=np.float64)
-        for b in range(n_bootstrap):
+        start_rep = 0
+
+        # Resume from checkpoint if available
+        if checkpoint_path is not None and Path(checkpoint_path).exists():
+            ck = np.load(checkpoint_path)
+            saved_rep = int(ck["completed_reps"])
+            if saved_rep > 0 and ck["risk_mat"].shape == risk_mat.shape:
+                risk_mat[:, :saved_rep] = ck["risk_mat"][:, :saved_rep]
+                start_rep = saved_rep
+                print(f"[checkpoint] resumed from rep {saved_rep}/{n_bootstrap}")
+
+        # Cache initial fitted state for warm-start across bootstraps
+        warm_state = None
+        if self._model is not None:
+            warm_state = {k: v.detach().clone() for k, v in self._model.state_dict().items()}
+
+        for b_rep in range(start_rep, n_bootstrap):
             idx = cluster_bootstrap_indices(cohort.subject_ids, rng)
             boot_cohort = slice_cohort(cohort, idx)
             if refit:
+                if warm_state is not None and self._model is not None:
+                    # Warm-start from prior fit (S6 — non-blocking optim speedup)
+                    self._model.load_state_dict(warm_state)
                 self.fit(boot_cohort)
+                if self._model is not None:
+                    warm_state = {
+                        k: v.detach().clone() for k, v in self._model.state_dict().items()
+                    }
+
+            # Pre-draw shared MC quantities for this bootstrap (S4 fix)
+            N_obs = boot_cohort.L_dyn.shape[0]
+            M = self.config.n_mc_subjects or N_obs
+            K_re = self._B_basis.shape[1]
+            idx0_b = rng.integers(0, N_obs, size=M)
+            z = rng.standard_normal(size=(self.config.n_b_draws, M, K_re))
+            b_draws_b = np.einsum("dmk,kj->dmj", z, self._L_chol_np.T)
+            L_seeds_b = rng.integers(
+                0, 2**31 - 1, size=self.config.n_b_draws,
+            )
+
             for ki, k in enumerate(target_bins):
-                cum = self._simulate_counterfactual_risk(
-                    boot_cohort, intervene_bin=k, rng=rng,
+                risk_mat[ki, b_rep] = self._simulate_counterfactual_risk_with_draws(
+                    boot_cohort, intervene_bin=k,
+                    idx0=idx0_b, b_draws=b_draws_b, L_noise_seeds=L_seeds_b,
                 )
-                risk_mat[ki, b] = float(cum.mean())
+
+            # Checkpoint after each rep
+            if checkpoint_path is not None:
+                np.savez(
+                    checkpoint_path,
+                    risk_mat=risk_mat, completed_reps=np.array(b_rep + 1),
+                )
+
         return DoseResponseResult(
             bins=list(target_bins),
             bin_centers_J_min=bin_centers_J_min(cohort),
