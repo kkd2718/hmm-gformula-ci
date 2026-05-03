@@ -70,14 +70,19 @@ def _fre_nice_model(
     """
     p = X_outcome.shape[1]
     beta = numpyro.sample("beta", dist.Normal(jnp.zeros(p), 5.0))
-    # Sigma_b parameterized via LKJ correlation + Half-Cauchy scales
-    L_corr = numpyro.sample(
-        "L_corr", dist.LKJCholesky(K_re, concentration=2.0),
-    )
+    # Sigma_b parameterized via LKJ correlation + Half-Cauchy scales.
+    # K_re == 1 special-case: LKJCholesky requires dim >= 2, fall back to
+    # plain HalfCauchy on a scalar (recovering Xu 2024's scalar RE prior).
     tau = numpyro.sample("tau", dist.HalfCauchy(jnp.full((K_re,), 2.5)))
-    L_chol = numpyro.deterministic(
-        "L_chol", jnp.expand_dims(tau, -1) * L_corr,
-    )
+    if K_re == 1:
+        L_chol = numpyro.deterministic("L_chol", tau.reshape(1, 1))
+    else:
+        L_corr = numpyro.sample(
+            "L_corr", dist.LKJCholesky(K_re, concentration=2.0),
+        )
+        L_chol = numpyro.deterministic(
+            "L_chol", jnp.expand_dims(tau, -1) * L_corr,
+        )
     # Non-centered hierarchical: b_i = L_chol @ z_i
     z = numpyro.sample(
         "z_b", dist.Normal(jnp.zeros((n_groups, K_re)), 1.0),
