@@ -239,6 +239,9 @@ class SplineGLMM(nn.Module):
         -------
         logit_fix : (N, T)
         """
+        # Squeeze trailing singleton if cohort gives (N, T, 1)
+        if t_norm.ndim == 3 and t_norm.shape[-1] == 1:
+            t_norm = t_norm.squeeze(-1)
         eta_fix = self.beta_0 + (A * self.beta_A).sum(dim=-1)  # (N, T)
         if self.eta is not None and L_dyn is not None and L_dyn.shape[-1] > 0:
             eta_fix = eta_fix + (L_dyn * self.eta).sum(dim=-1)
@@ -247,6 +250,7 @@ class SplineGLMM(nn.Module):
         if t_norm.ndim == 1:
             eta_fix = eta_fix + self.beta_time * t_norm.unsqueeze(0)
         else:
+            # t_norm is (N, T) — element-wise broadcast with eta_fix (N, T)
             eta_fix = eta_fix + self.beta_time * t_norm
         return eta_fix
 
