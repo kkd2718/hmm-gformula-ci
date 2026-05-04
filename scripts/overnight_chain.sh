@@ -49,13 +49,45 @@ python3 -u scripts/run_jax_dose.py \
 echo "[$(ts)] [2/3] K=6 done." | tee -a $LOG
 
 # ----- Subgroup analysis (uses Spec I K=5 state, existing) -----
-echo "[$(ts)] [3/3] Subgroup analysis ..." | tee -a $LOG
+echo "[$(ts)] [3/4] Subgroup analysis ..." | tee -a $LOG
 python3 -u scripts/subgroup_jax_dose.py \
   --csv data/ards_v31_v4.csv \
   --state-path results/bayesian_main_v2/fre_nice_K5_state.npz \
   --out-md results/subgroup/subgroup_K5.md \
   --n-posterior-subset 200 --n-b-draws-per-post 5 \
   >> $LOG 2>&1
-echo "[$(ts)] [3/3] Subgroup done." | tee -a $LOG
+echo "[$(ts)] [3/4] Subgroup done." | tee -a $LOG
+
+# ----- LOCO sensitivity (refit per excluded covariate) -----
+mkdir -p results/loco_K5
+TV_COVARIATES=("pf_ratio" "paco2" "lactate" "map_mmhg" "heart_rate" "gcs_total" "creatinine" "temperature_c")
+STATIC_COVARIATES=("anchor_age" "gender_M" "bmi_imputed" "charlson_index")
+
+run_loco_one() {
+  local kind=$1   # 'tv' or 'static'
+  local cov=$2
+  local exclude_arg
+  if [ "$kind" = "tv" ]; then exclude_arg="--exclude-tv $cov"; else exclude_arg="--exclude-static $cov"; fi
+  echo "[$(ts)] LOCO ${kind}/${cov} fit + dose ..." | tee -a $LOG
+  python3 -u scripts/run_bayesian_main.py \
+    --csv data/ards_v31_v4.csv --out-dir results/loco_K5/${kind}_${cov} \
+    --inference nuts --n-warmup 1000 --n-samples 1000 --n-chains 2 \
+    --target-accept 0.95 --n-posterior-subset 200 \
+    --methods K5 --phase fit $exclude_arg \
+    >> $LOG 2>&1
+  python3 -u scripts/run_jax_dose.py \
+    --csv data/ards_v31_v4.csv --state-dir results/loco_K5/${kind}_${cov} \
+    --out-dir results/loco_K5/${kind}_${cov} --prefix fre_nice_K5 \
+    $exclude_arg >> $LOG 2>&1
+}
+
+echo "[$(ts)] [4/4] LOCO sensitivity (12 covariates) ..." | tee -a $LOG
+for cov in "${TV_COVARIATES[@]}"; do
+  run_loco_one "tv" "$cov"
+done
+for cov in "${STATIC_COVARIATES[@]}"; do
+  run_loco_one "static" "$cov"
+done
+echo "[$(ts)] [4/4] LOCO done." | tee -a $LOG
 
 echo "[$(ts)] === Overnight chain complete ===" | tee -a $LOG

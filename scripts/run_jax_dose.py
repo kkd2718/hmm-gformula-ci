@@ -34,12 +34,18 @@ def main():
     parser.add_argument("--n-b-draws-per-post", type=int, default=5)
     parser.add_argument("--share-RE-on-L", action="store_true",
                         help="Spec ②: forward L sim uses augmented beta_L")
+    parser.add_argument("--exclude-tv", nargs="*", default=[])
+    parser.add_argument("--exclude-static", nargs="*", default=[])
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"=== JAX dose_response: {args.prefix} ===")
-    cohort = load_ards_cohort(ARDSConfig(csv_path=args.csv, n_bins=args.n_bins))
+    cohort = load_ards_cohort(ARDSConfig(
+        csv_path=args.csv, n_bins=args.n_bins,
+        exclude_tv_cols=tuple(args.exclude_tv),
+        exclude_static_cols=tuple(args.exclude_static),
+    ))
     L_obs = cohort.L_dyn.numpy().astype(np.float32)
     C_static = cohort.C_static.numpy().astype(np.float32)
     K_A = cohort.feature_layout["n_bins"]

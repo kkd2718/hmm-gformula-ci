@@ -223,10 +223,18 @@ def main():
     parser.add_argument("--K5-knots", nargs="+", type=float,
                         default=[0.0, 3.0, 7.0, 14.0, 21.0],
                         help="Knot positions for K=5 spec (sensitivity analysis)")
+    parser.add_argument("--exclude-tv", nargs="*", default=[],
+                        help="TV covariates to exclude (LOCO sensitivity)")
+    parser.add_argument("--exclude-static", nargs="*", default=[],
+                        help="Static covariates to exclude (LOCO sensitivity)")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    cohort = load_ards_cohort(ARDSConfig(csv_path=args.csv, n_bins=args.n_bins))
+    cohort = load_ards_cohort(ARDSConfig(
+        csv_path=args.csv, n_bins=args.n_bins,
+        exclude_tv_cols=tuple(args.exclude_tv),
+        exclude_static_cols=tuple(args.exclude_static),
+    ))
     target_bins = list(range(args.n_bins))
     edges = cohort.bin_edges_mp
     centers = np.array([
