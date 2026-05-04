@@ -206,7 +206,9 @@ def main():
     results = {}
 
     if "xu" in args.methods:
-        post_path = args.results_dir / "posterior_xu_bayesian.npz"
+        post_path = args.results_dir / "xu_bayesian_state.npz"
+        if not post_path.exists():
+            post_path = args.results_dir / "posterior_xu_bayesian.npz"
         if post_path.exists():
             print("=== Xu Bayesian natural course (observed L plug-in) ===")
             posterior = dict(np.load(post_path))
@@ -223,7 +225,9 @@ def main():
     from src.models.spline_glmm import natural_cubic_basis
 
     if "K1" in args.methods:
-        post_path = args.results_dir / "posterior_fre_nice_K1.npz"
+        post_path = args.results_dir / "fre_nice_K1_state.npz"
+        if not post_path.exists():
+            post_path = args.results_dir / "posterior_fre_nice_K1.npz"
         if post_path.exists():
             print("=== K=1 FRE-NICE Bayesian natural course (forward L sim, observed A) ===")
             posterior = dict(np.load(post_path))
@@ -239,7 +243,9 @@ def main():
             results["fre_nice_K1"] = (mean, arr)
 
     if "K5" in args.methods:
-        post_path = args.results_dir / "posterior_fre_nice_K5.npz"
+        post_path = args.results_dir / "fre_nice_K5_state.npz"
+        if not post_path.exists():
+            post_path = args.results_dir / "posterior_fre_nice_K5.npz"
         if post_path.exists():
             print("=== K=5 FRE-NICE Bayesian natural course (forward L sim, observed A) ===")
             posterior = dict(np.load(post_path))
