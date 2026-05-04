@@ -81,8 +81,13 @@ class XuBayesianConfig:
     SVI uses AutoMultivariateNormal guide -> still Bayesian (variational
     posterior approximation), with diagonal-plus-correlation Gaussian for
     the joint posterior. Recommended fallback when NUTS infeasible.
+
+    ref_bin: MP bin index to use as reference (one-hot column dropped). Removes
+    the bias-vs-bins collinearity (rank deficiency by 1) in the design matrix.
+    Default 16 corresponds to ≈ 17 J/min (Costa 2021 cutoff).
     """
     inference: str = "nuts"           # "nuts" or "svi"
+    ref_bin: int = 16
     # NUTS parameters
     n_warmup: int = 1000
     n_samples: int = 1000
@@ -122,16 +127,23 @@ class XuGLMMBayesian(BenchmarkMethod):
         L = cohort.feature_layout
         K = L["n_bins"]
         N, T = cohort.Y.shape[0], cohort.Y.shape[1]
-        cov = cohort.covariates.numpy().reshape(N * T, -1)
+        cov = cohort.covariates.numpy().reshape(N * T, -1).astype(np.float64)
         y = cohort.Y.numpy().reshape(N * T)
         m = cohort.at_risk.numpy().reshape(N * T)
         if override_bin is not None:
             cov = cov.copy()
             cov[:, :K] = 0.0
             cov[:, override_bin] = 1.0
+        # Drop reference bin column from one-hot to avoid bias-vs-bins collinearity.
+        # cov layout: [bins (K), L_dyn, C_static, t_norm]; bins are first K cols.
+        ref = self.config.ref_bin
+        if ref is not None and 0 <= ref < K:
+            keep_bins = [k for k in range(K) if k != ref]
+            cov_bins = cov[:, keep_bins]                   # (NT, K-1)
+            cov_other = cov[:, K:]
+            cov = np.concatenate([cov_bins, cov_other], axis=1)
         bias = np.ones((cov.shape[0], 1), dtype=np.float64)
-        X = np.concatenate([bias, cov.astype(np.float64)], axis=1)
-        # Subject-level groups by integer index
+        X = np.concatenate([bias, cov], axis=1)
         _, inv = np.unique(cohort.subject_ids, return_inverse=True)
         group_idx = np.repeat(inv, T)
         return X, y.astype(np.float64), m.astype(np.float64), group_idx

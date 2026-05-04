@@ -102,9 +102,15 @@ class FRENICEBayesianConfig:
     """Hyperparameters for FRE-NICE Bayesian benchmark.
 
     inference: "nuts" (full posterior) or "svi" (variational, faster).
+
+    ref_bin: MP bin index dropped from outcome design one-hot to avoid
+    bias-vs-bins collinearity (rank deficiency by 1). Default 16 (Costa 2021
+    cutoff ≈ 17 J/min). Forward L simulation also uses dropped one-hot for
+    A_{t-1}, ensuring identification across all design matrices.
     """
     knots: tuple[float, ...] = (0.0, 3.0, 7.0, 14.0, 21.0)
     inference: str = "nuts"
+    ref_bin: int = 16
     # NUTS
     n_warmup: int = 1000
     n_samples: int = 1000
@@ -142,6 +148,16 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         self._t_max: int = 0
 
     # ----- design assembly -----
+    def _drop_ref_bins(self, cov: np.ndarray, K_A: int) -> np.ndarray:
+        """Drop the reference-bin column from a (NT, K_A + others) design's bin block."""
+        ref = self.config.ref_bin
+        if ref is None or not (0 <= ref < K_A):
+            return cov
+        keep_bins = [k for k in range(K_A) if k != ref]
+        cov_bins = cov[:, keep_bins]                               # (NT, K_A-1)
+        cov_other = cov[:, K_A:]
+        return np.concatenate([cov_bins, cov_other], axis=1)
+
     def _build_outcome_design(
         self, cohort: ARDSCohort, override_bin: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -150,15 +166,17 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         L = cohort.feature_layout
         K_A = L["n_bins"]
         N, T = cohort.Y.shape[0], cohort.Y.shape[1]
-        cov = cohort.covariates.numpy().reshape(N * T, -1)
+        cov = cohort.covariates.numpy().reshape(N * T, -1).astype(np.float64)
         y = cohort.Y.numpy().reshape(N * T)
         m = cohort.at_risk.numpy().reshape(N * T)
         if override_bin is not None:
             cov = cov.copy()
             cov[:, :K_A] = 0.0
             cov[:, override_bin] = 1.0
+        # Drop reference bin column to avoid bias-vs-bins collinearity
+        cov = self._drop_ref_bins(cov, K_A)
         bias = np.ones((cov.shape[0], 1), dtype=np.float64)
-        X_outcome = np.concatenate([bias, cov.astype(np.float64)], axis=1)
+        X_outcome = np.concatenate([bias, cov], axis=1)
         # B basis tiled to each observation's t
         B = self._B_basis                                          # (T, K_re)
         B_per_obs = np.tile(B, (N, 1))                             # (N*T, K_re)
@@ -169,6 +187,13 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
             y.astype(np.float64), m.astype(np.float64), group_idx,
         )
 
+    def _drop_ref_in_A(self, A_onehot: np.ndarray) -> np.ndarray:
+        """Drop reference bin column from (N, K_A) one-hot."""
+        ref = self.config.ref_bin
+        if ref is None or A_onehot.shape[1] <= 1:
+            return A_onehot
+        return np.delete(A_onehot, ref, axis=1)
+
     def _build_history_features(
         self, L_prev: np.ndarray, A_prev: np.ndarray, C: np.ndarray,
         t_idx: int, T: int,
@@ -176,7 +201,8 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         N = L_prev.shape[0]
         bias = np.ones((N, 1), dtype=np.float64)
         t_col = np.full((N, 1), t_idx / max(T - 1, 1), dtype=np.float64)
-        return np.concatenate([bias, L_prev, A_prev, C, t_col], axis=1)
+        A_dropped = self._drop_ref_in_A(A_prev)
+        return np.concatenate([bias, L_prev, A_dropped, C, t_col], axis=1)
 
     # ----- fit -----
     def fit(self, cohort: ARDSCohort, **kwargs) -> None:
@@ -353,11 +379,15 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
                                 0.0, self._sd_L[j], size=M,
                             )
                         L_cur = L_new
-                    # Outcome logit (use posterior beta)
+                    # Outcome logit (use posterior beta).
+                    # Outcome design layout from _build_outcome_design after
+                    # cov reorder + drop ref bin: [bias, bins\\ref, L_dyn,
+                    # C_static, t_norm]. Reproduce it here.
                     bias_col = np.ones((M, 1), dtype=np.float64)
                     t_col = np.full((M, 1), t / max(T - 1, 1))
+                    A_dropped = self._drop_ref_in_A(A_onehot)
                     X_t = np.concatenate(
-                        [bias_col, A_onehot, L_cur, C_mc, t_col], axis=1,
+                        [bias_col, A_dropped, L_cur, C_mc, t_col], axis=1,
                     )
                     eta_fix = X_t @ beta
                     logit = eta_fix + random_logit_full[:, t]

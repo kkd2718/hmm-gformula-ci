@@ -34,13 +34,20 @@ def _sigmoid(x):
 
 def natural_course_xu_bayesian(cohort, posterior, n_b_draws: int = 50,
                                 n_posterior_subset: int = 200,
+                                ref_bin: int = 16,
                                 seed: int = 0) -> tuple[float, np.ndarray]:
-    """Xu Bayesian natural course: observed L plug-in, observed A, marginalize over b."""
+    """Xu Bayesian natural course: observed L plug-in, observed A, marginalize over b.
+
+    Drops reference bin column from one-hot to match production design.
+    """
     rng = np.random.default_rng(seed)
     L = cohort.feature_layout
     K_A = L["n_bins"]
     N, T = cohort.Y.shape[0], cohort.Y.shape[1]
     cov = cohort.covariates.numpy().reshape(N * T, -1).astype(np.float64)
+    if ref_bin is not None and 0 <= ref_bin < K_A:
+        keep = [k for k in range(K_A) if k != ref_bin]
+        cov = np.concatenate([cov[:, keep], cov[:, K_A:]], axis=1)
     bias = np.ones((cov.shape[0], 1), dtype=np.float64)
     X = np.concatenate([bias, cov], axis=1)               # (N*T, p)
 
@@ -75,14 +82,23 @@ def natural_course_fre_nice(cohort, posterior, B_basis: np.ndarray,
                              beta_L: list[np.ndarray], sd_L: list[float],
                              n_posterior_subset: int = 200,
                              n_b_draws_per_post: int = 5,
+                             ref_bin: int = 16,
                              seed: int = 0) -> tuple[float, np.ndarray]:
-    """FRE-NICE natural course: forward-simulate L under OBSERVED A, marginalize over b."""
+    """FRE-NICE natural course: forward-simulate L under OBSERVED A, marginalize over b.
+
+    Drops reference bin column from A one-hot to match production design.
+    """
     rng = np.random.default_rng(seed)
     L = cohort.feature_layout
     K_A, p_dyn, p_stat = L["n_bins"], L["n_dyn"], L["n_static"]
     N, T = cohort.Y.shape[0], cohort.Y.shape[1]
     L_obs = cohort.L_dyn.numpy().astype(np.float64)
-    A_bin = cohort.A_bin.numpy().astype(np.float64)
+    A_bin_full = cohort.A_bin.numpy().astype(np.float64)
+    if ref_bin is not None and 0 <= ref_bin < K_A:
+        keep = [k for k in range(K_A) if k != ref_bin]
+        A_bin = A_bin_full[:, :, keep]            # (N, T, K_A-1)
+    else:
+        A_bin = A_bin_full
     C_static = cohort.C_static.numpy().astype(np.float64)
 
     S_total = posterior["beta"].shape[0]
@@ -154,13 +170,21 @@ def main():
     print(f"Cohort raw 28-day mortality: {100*cohort_raw:.2f}%")
     print()
 
-    # Re-fit pooled L equations once (frequentist, same as in fre_nice_bayesian.fit)
+    # Re-fit pooled L equations once (frequentist, same as in fre_nice_bayesian.fit).
+    # Drop reference bin from A one-hot so beta_L coefficients match production design.
+    REF_BIN = 16
     from src.benchmarks.standard_gformula import _fit_linear
     L_dyn = cohort.L_dyn.numpy().astype(np.float64)
-    A_bin = cohort.A_bin.numpy().astype(np.float64)
+    A_bin_full = cohort.A_bin.numpy().astype(np.float64)
+    L = cohort.feature_layout
+    K_A = L["n_bins"]
+    if REF_BIN is not None and 0 <= REF_BIN < K_A:
+        keep = [k for k in range(K_A) if k != REF_BIN]
+        A_bin = A_bin_full[:, :, keep]
+    else:
+        A_bin = A_bin_full
     C_static = cohort.C_static.numpy().astype(np.float64)
     at_risk = cohort.at_risk.numpy().astype(np.float64).squeeze(-1)
-    L = cohort.feature_layout
     p_dyn = L["n_dyn"]
     T = cohort.Y.shape[1]
     rows, targets, weights = [], [], []
