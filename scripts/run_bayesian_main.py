@@ -1,15 +1,16 @@
 """Bayesian main analysis: Xu + K=1 + K=5 FRE-NICE on full cohort.
 
-Sequentially fits the three Bayesian methods, saves posterior samples and
-counterfactual dose-response (posterior mean + 95% credible interval) per
-target MP bin.
+Supports phase-based execution for pipelining (overlap dose_response CPU work
+with the next method's NUTS GPU fit):
+
+    --phase fit   : run NUTS only, save posterior + state, exit
+    --phase dose  : load posterior + state, run dose_response, save risks
+    --phase full  : (default) fit then dose_response inline
 
 Outputs (to <out_dir>):
-    xu_bayesian_risks.npz
-    fre_nice_K1_risks.npz
-    fre_nice_K5_risks.npz
-    posterior_xu.npz, posterior_K1.npz, posterior_K5.npz
-    bayesian_table2.md       — combined dose-response markdown
+    {prefix}_state.npz      — posterior + benchmark state (after fit)
+    {prefix}_risks.npz      — dose-response output (after dose)
+    bayesian_table2.md      — combined markdown (after all dose phases)
 """
 from __future__ import annotations
 import argparse
@@ -32,7 +33,63 @@ from src.benchmarks import (
 )
 
 
-def _save(result, posterior, prefix: str, out_dir: Path) -> None:
+# ----------------------------------------------------------------------
+# State persistence helpers
+# ----------------------------------------------------------------------
+def _save_state_xu(bench: XuGLMMBayesian, prefix: str, out_dir: Path) -> None:
+    np.savez(
+        out_dir / f"{prefix}_state.npz",
+        beta=bench._posterior["beta"],
+        sigma_b=bench._posterior["sigma_b"],
+        n_groups=bench._n_groups,
+    )
+
+
+def _load_state_xu(bench: XuGLMMBayesian, cohort, prefix: str, out_dir: Path) -> None:
+    z = np.load(out_dir / f"{prefix}_state.npz")
+    bench._posterior = {
+        "beta": z["beta"],
+        "sigma_b": z["sigma_b"],
+    }
+    bench._n_groups = int(z["n_groups"])
+
+
+def _save_state_fre(bench: FRENICEBayesianBenchmark, prefix: str, out_dir: Path) -> None:
+    arr = {
+        "beta": bench._posterior["beta"],
+        "L_chol": bench._posterior["L_chol"],
+        "tau": bench._posterior["tau"],
+        "B_basis": bench._B_basis,
+        "sd_L": np.array(bench._sd_L),
+        "n_bins": bench._n_bins, "n_dyn": bench._n_dyn,
+        "n_static": bench._n_static, "t_max": bench._t_max,
+        "n_groups": bench._n_groups,
+    }
+    # beta_L is a list of arrays (one per L_dyn dim) — same length so stack
+    arr["beta_L"] = np.stack(bench._beta_L) if bench._beta_L else np.zeros((0, 0))
+    np.savez(out_dir / f"{prefix}_state.npz", **arr)
+
+
+def _load_state_fre(
+    bench: FRENICEBayesianBenchmark, cohort, prefix: str, out_dir: Path,
+) -> None:
+    z = np.load(out_dir / f"{prefix}_state.npz")
+    bench._posterior = {
+        "beta": z["beta"],
+        "L_chol": z["L_chol"],
+        "tau": z["tau"],
+    }
+    bench._B_basis = z["B_basis"]
+    bench._beta_L = [z["beta_L"][j] for j in range(z["beta_L"].shape[0])]
+    bench._sd_L = list(z["sd_L"])
+    bench._n_bins = int(z["n_bins"])
+    bench._n_dyn = int(z["n_dyn"])
+    bench._n_static = int(z["n_static"])
+    bench._t_max = int(z["t_max"])
+    bench._n_groups = int(z["n_groups"])
+
+
+def _save_risks(result, prefix: str, out_dir: Path) -> None:
     np.savez(
         out_dir / f"{prefix}_risks.npz",
         bin_centers_J_min=np.array(result.bin_centers_J_min),
@@ -42,17 +99,15 @@ def _save(result, posterior, prefix: str, out_dir: Path) -> None:
         risk_ci_high=result.risk_ci_high,
         risk_raw=result.risk_raw,
     )
-    np.savez(out_dir / f"posterior_{prefix}.npz", **posterior)
 
 
 def _md_table(centers, ref_bin, results: dict[str, "Tuple"]) -> list[str]:
-    """Build a side-by-side dose-response table across methods."""
     methods = list(results.keys())
     md = [
         "# Bayesian 4-method comparison (Table 2 surface)",
         "",
         f"_Reference bin: {ref_bin} (≈ {centers[ref_bin]:.1f} J/min). "
-        "Posterior 95% credible intervals; no bootstrap (Bayesian standard)._",
+        "Posterior 95% credible intervals._",
         "",
     ]
     headers = ["MP bin", "Center (J/min)"]
@@ -72,12 +127,75 @@ def _md_table(centers, ref_bin, results: dict[str, "Tuple"]) -> list[str]:
     return md
 
 
+# ----------------------------------------------------------------------
+# Per-method runners (each handles fit / dose / full)
+# ----------------------------------------------------------------------
+def run_xu(cohort, target_bins, args, out_dir: Path):
+    cfg = XuBayesianConfig(
+        inference=args.inference,
+        n_warmup=args.n_warmup, n_samples=args.n_samples,
+        n_chains=args.n_chains, target_accept=args.target_accept,
+        svi_steps=args.svi_steps, svi_lr=args.svi_lr,
+        svi_n_posterior_draws=args.svi_posterior_draws,
+        n_b_draws=args.n_b_draws, n_posterior_subset=args.n_posterior_subset,
+        seed=args.seed,
+    )
+    bench = XuGLMMBayesian(cfg)
+    if args.phase in ("fit", "full"):
+        print("\n=== Xu Bayesian — FIT ===")
+        t0 = time.time()
+        bench.fit(cohort)
+        print(f"  fit time: {(time.time()-t0)/60:.1f} min")
+        _save_state_xu(bench, "xu_bayesian", out_dir)
+    if args.phase in ("dose", "full"):
+        print("\n=== Xu Bayesian — DOSE ===")
+        if args.phase == "dose":
+            _load_state_xu(bench, cohort, "xu_bayesian", out_dir)
+        t0 = time.time()
+        result = bench.dose_response(cohort, target_bins=target_bins, refit=False)
+        print(f"  dose time: {(time.time()-t0)/60:.1f} min")
+        _save_risks(result, "xu_bayesian", out_dir)
+        return result
+    return None
+
+
+def run_fre_nice(knots, prefix, cohort, target_bins, args, out_dir: Path,
+                 seed_offset: int = 1):
+    cfg = FRENICEBayesianConfig(
+        knots=knots, inference=args.inference,
+        n_warmup=args.n_warmup, n_samples=args.n_samples,
+        n_chains=args.n_chains, target_accept=args.target_accept,
+        svi_steps=args.svi_steps, svi_lr=args.svi_lr,
+        svi_n_posterior_draws=args.svi_posterior_draws,
+        n_posterior_subset=args.n_posterior_subset,
+        n_b_draws_per_post=5, seed=args.seed + seed_offset,
+    )
+    bench = FRENICEBayesianBenchmark(cfg)
+    if args.phase in ("fit", "full"):
+        print(f"\n=== {prefix} — FIT ===")
+        t0 = time.time()
+        bench.fit(cohort)
+        print(f"  fit time: {(time.time()-t0)/60:.1f} min")
+        _save_state_fre(bench, prefix, out_dir)
+    if args.phase in ("dose", "full"):
+        print(f"\n=== {prefix} — DOSE ===")
+        if args.phase == "dose":
+            _load_state_fre(bench, cohort, prefix, out_dir)
+        t0 = time.time()
+        result = bench.dose_response(cohort, target_bins=target_bins, refit=False)
+        print(f"  dose time: {(time.time()-t0)/60:.1f} min")
+        _save_risks(result, prefix, out_dir)
+        return result
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--n-bins", type=int, default=20)
     parser.add_argument("--inference", choices=["nuts", "svi"], default="nuts")
+    parser.add_argument("--phase", choices=["fit", "dose", "full"], default="full")
     parser.add_argument("--n-warmup", type=int, default=1000)
     parser.add_argument("--n-samples", type=int, default=1000)
     parser.add_argument("--n-chains", type=int, default=4)
@@ -106,69 +224,30 @@ def main():
     ])
     ref_bin = int(np.nanargmin(np.abs(centers - args.reference_mp)))
     print(f"Cohort: N={cohort.Y.shape[0]} stays, "
-          f"G={len(np.unique(cohort.subject_ids))} subjects. ref_bin={ref_bin}")
+          f"G={len(np.unique(cohort.subject_ids))} subjects. "
+          f"ref_bin={ref_bin}, phase={args.phase}")
 
     results = {}
-
     if "xu" in args.methods:
-        print("\n=== Method 2: Xu Bayesian GLMM (scalar RE, MSM) ===")
-        cfg = XuBayesianConfig(
-            inference=args.inference,
-            n_warmup=args.n_warmup, n_samples=args.n_samples,
-            n_chains=args.n_chains, target_accept=args.target_accept,
-            svi_steps=args.svi_steps, svi_lr=args.svi_lr,
-            svi_n_posterior_draws=args.svi_posterior_draws,
-            n_b_draws=args.n_b_draws, n_posterior_subset=args.n_posterior_subset,
-            seed=args.seed,
-        )
-        bench = XuGLMMBayesian(cfg)
-        t0 = time.time()
-        bench.fit(cohort)
-        print(f"  fit time: {(time.time()-t0)/60:.1f} min")
-        result = bench.dose_response(cohort, target_bins=target_bins, refit=False)
-        _save(result, bench._posterior, "xu_bayesian", args.out_dir)
-        results["Xu Bayesian"] = result
-
+        r = run_xu(cohort, target_bins, args, args.out_dir)
+        if r is not None:
+            results["Xu Bayesian"] = r
     if "K1" in args.methods:
-        print("\n=== Method 3: FRE-NICE Bayesian K=1 (scalar RE, NICE) ===")
-        cfg = FRENICEBayesianConfig(
-            knots=(14.0,), inference=args.inference,
-            n_warmup=args.n_warmup, n_samples=args.n_samples,
-            n_chains=args.n_chains, target_accept=args.target_accept,
-            svi_steps=args.svi_steps, svi_lr=args.svi_lr,
-            svi_n_posterior_draws=args.svi_posterior_draws,
-            n_posterior_subset=args.n_posterior_subset,
-            n_b_draws_per_post=5, seed=args.seed + 1,
+        r = run_fre_nice(
+            (14.0,), "fre_nice_K1", cohort, target_bins, args, args.out_dir,
+            seed_offset=1,
         )
-        bench = FRENICEBayesianBenchmark(cfg)
-        t0 = time.time()
-        bench.fit(cohort)
-        print(f"  fit time: {(time.time()-t0)/60:.1f} min")
-        result = bench.dose_response(cohort, target_bins=target_bins, refit=False)
-        _save(result, bench._posterior, "fre_nice_K1", args.out_dir)
-        results["FRE-NICE K=1"] = result
-
+        if r is not None:
+            results["FRE-NICE K=1"] = r
     if "K5" in args.methods:
-        print("\n=== Method 4: FRE-NICE Bayesian K=5 (functional RE, NICE) ===")
-        cfg = FRENICEBayesianConfig(
-            knots=(0.0, 3.0, 7.0, 14.0, 21.0), inference=args.inference,
-            n_warmup=args.n_warmup, n_samples=args.n_samples,
-            n_chains=args.n_chains, target_accept=args.target_accept,
-            svi_steps=args.svi_steps, svi_lr=args.svi_lr,
-            svi_n_posterior_draws=args.svi_posterior_draws,
-            n_posterior_subset=args.n_posterior_subset,
-            n_b_draws_per_post=5, seed=args.seed + 2,
+        r = run_fre_nice(
+            (0.0, 3.0, 7.0, 14.0, 21.0), "fre_nice_K5", cohort,
+            target_bins, args, args.out_dir, seed_offset=2,
         )
-        bench = FRENICEBayesianBenchmark(cfg)
-        t0 = time.time()
-        bench.fit(cohort)
-        print(f"  fit time: {(time.time()-t0)/60:.1f} min")
-        result = bench.dose_response(cohort, target_bins=target_bins, refit=False)
-        _save(result, bench._posterior, "fre_nice_K5", args.out_dir)
-        results["FRE-NICE K=5"] = result
+        if r is not None:
+            results["FRE-NICE K=5"] = r
 
-    # Combined markdown
-    if results:
+    if results and args.phase != "fit":
         md = _md_table(centers, ref_bin, results)
         (args.out_dir / "bayesian_table2.md").write_text(
             "\n".join(md), encoding="utf-8",
