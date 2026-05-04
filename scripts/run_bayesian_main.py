@@ -220,6 +220,9 @@ def main():
     parser.add_argument("--share-RE-on-L", action="store_true",
                         help="Spec ②: share FRE between Y and L equations "
                              "(refit L with extra column lambda_j * b^T B(t))")
+    parser.add_argument("--K5-knots", nargs="+", type=float,
+                        default=[0.0, 3.0, 7.0, 14.0, 21.0],
+                        help="Knot positions for K=5 spec (sensitivity analysis)")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -251,11 +254,25 @@ def main():
             results["FRE-NICE K=1"] = r
     if "K5" in args.methods:
         r = run_fre_nice(
-            (0.0, 3.0, 7.0, 14.0, 21.0), "fre_nice_K5", cohort,
+            tuple(args.K5_knots), "fre_nice_K5", cohort,
             target_bins, args, args.out_dir, seed_offset=2,
         )
         if r is not None:
             results["FRE-NICE K=5"] = r
+    if "K4" in args.methods:
+        r = run_fre_nice(
+            (0.0, 7.0, 14.0, 21.0), "fre_nice_K4", cohort,
+            target_bins, args, args.out_dir, seed_offset=3,
+        )
+        if r is not None:
+            results["FRE-NICE K=4"] = r
+    if "K6" in args.methods:
+        r = run_fre_nice(
+            (0.0, 3.0, 7.0, 14.0, 21.0, 27.0), "fre_nice_K6", cohort,
+            target_bins, args, args.out_dir, seed_offset=4,
+        )
+        if r is not None:
+            results["FRE-NICE K=6"] = r
 
     if results and args.phase != "fit":
         md = _md_table(centers, ref_bin, results)
