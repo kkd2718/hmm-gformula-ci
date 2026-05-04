@@ -32,6 +32,8 @@ def main():
     parser.add_argument("--ref-bin", type=int, default=16)
     parser.add_argument("--n-posterior-subset", type=int, default=200)
     parser.add_argument("--n-b-draws-per-post", type=int, default=5)
+    parser.add_argument("--share-RE-on-L", action="store_true",
+                        help="Spec ②: forward L sim uses augmented beta_L")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +76,7 @@ def main():
         n_posterior_subset=args.n_posterior_subset,
         n_b_draws_per_post=args.n_b_draws_per_post,
         seed=args.seed,
+        share_RE_on_L=args.share_RE_on_L,
     )
     print(f"\n  total time: {(time.time()-t0)/60:.1f} min")
     print(f"  risk_mat shape: {risk_mat.shape} (S, n_bins)")

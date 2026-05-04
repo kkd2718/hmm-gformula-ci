@@ -104,13 +104,22 @@ class FRENICEBayesianConfig:
     inference: "nuts" (full posterior) or "svi" (variational, faster).
 
     ref_bin: MP bin index dropped from outcome design one-hot to avoid
-    bias-vs-bins collinearity (rank deficiency by 1). Default 16 (Costa 2021
-    cutoff ≈ 17 J/min). Forward L simulation also uses dropped one-hot for
-    A_{t-1}, ensuring identification across all design matrices.
+    bias-vs-bins collinearity. Default 16 (Costa 2021 cutoff ≈ 17 J/min).
+
+    share_RE_on_L: if True, L equations are augmented with an extra column
+      lambda_j * b_i^T B(t), where b_i is the same FRE that drives the outcome.
+      This is Spec ② (shared RE across Y and L), an ablation against the
+      default Spec ① (Y-only RE). Used to test whether mismatch between
+      RE-aware Y model and RE-blind OLS L equations causes systematic
+      forward-simulation drift (positive bias vs cohort raw natural course).
+      Implementation: two-stage. NUTS Y fit -> extract b_hat (posterior
+      mean per subject) -> refit L equations with extra column
+      b_hat[i]^T B(t). Forward simulation uses sampled b for each MC draw.
     """
     knots: tuple[float, ...] = (0.0, 3.0, 7.0, 14.0, 21.0)
     inference: str = "nuts"
     ref_bin: int = 16
+    share_RE_on_L: bool = False
     # NUTS
     n_warmup: int = 1000
     n_samples: int = 1000
@@ -146,6 +155,9 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         self._n_dyn: int = 0
         self._n_static: int = 0
         self._t_max: int = 0
+        # Spec ② (share_RE_on_L) state: posterior-mean RE per subject
+        self._b_hat: np.ndarray | None = None          # (n_groups, K_re) or None
+        self._L_has_RE_col: bool = False               # True if β_L includes lambda_j
 
     # ----- design assembly -----
     def _drop_ref_bins(self, cov: np.ndarray, K_A: int) -> np.ndarray:
@@ -273,6 +285,14 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
             "L_chol": np.asarray(samples_flat["L_chol"]),     # (S, K_re, K_re)
             "tau": np.asarray(samples_flat["tau"]),           # (S, K_re)
         }
+        # Extract posterior mean of subject-level FRE for Spec ② refit
+        if "b" in samples_flat:
+            self._b_hat = np.asarray(samples_flat["b"]).mean(axis=0)  # (n_groups, K_re)
+
+        # ----- Spec ②: refit L equations with shared RE on L -----
+        if self.config.share_RE_on_L and self._b_hat is not None:
+            self._refit_L_with_shared_RE(cohort, K_A, K_re)
+            self._L_has_RE_col = True
         from numpyro.diagnostics import summary
         try:
             samples_chains = mcmc.get_samples(group_by_chain=True)
@@ -286,6 +306,63 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
             f"  [FRE-NICE Bayesian fit] tau (per-basis-dim scale): "
             f"mean = {self._posterior['tau'].mean(axis=0)}, "
             f"R-hat max = {r_hat_max:.3f}"
+        )
+
+    # ----- Spec ② helpers: share RE on L -----
+    def _refit_L_with_shared_RE(
+        self, cohort: ARDSCohort, K_A: int, K_re: int,
+    ) -> None:
+        """Refit pooled L equations with extra column lambda_j * b_hat[i]^T B(t).
+
+        b_hat[i] is the posterior mean of the FRE for subject i (extracted
+        from NUTS posterior over deterministic site 'b'). Shape (n_groups, K_re).
+        For each obs row (i, t): extra feature = b_hat[i] @ B(t).
+        Refit β_L_j with this augmented design (β_L now (p_hist + 1)-dim).
+        """
+        T = self._t_max
+        p_dyn = self._n_dyn
+        L_dyn = cohort.L_dyn.numpy().astype(np.float64)
+        A_bin_full = cohort.A_bin.numpy().astype(np.float64)
+        ref = self.config.ref_bin
+        if ref is not None and 0 <= ref < K_A:
+            keep_bins = [k for k in range(K_A) if k != ref]
+            A_bin = A_bin_full[:, :, keep_bins]
+        else:
+            A_bin = A_bin_full
+        C_static = cohort.C_static.numpy().astype(np.float64)
+        at_risk = cohort.at_risk.numpy().astype(np.float64).squeeze(-1)
+
+        # Group index per stay (i in [0, n_groups)), repeat across T
+        _, inv = np.unique(cohort.subject_ids, return_inverse=True)
+        # Per-row extra column: b_hat[group_i]^T B(t)
+        # Pre-compute b_hat[i, :] @ B[t, :] for all (i, t) -> (N, T)
+        N = L_dyn.shape[0]
+        b_hat_per_subject = self._b_hat[inv]                            # (N, K_re)
+        re_col_full = b_hat_per_subject @ self._B_basis.T              # (N, T)
+
+        rows, targets, weights = [], [], []
+        for t in range(1, T):
+            X_t = self._build_history_features(
+                L_dyn[:, t - 1, :], A_bin[:, t - 1, :], C_static, t_idx=t, T=T,
+            )
+            # Extra column for L equation at time t (uses B(t-1) since L_t depends on history)
+            extra = re_col_full[:, t - 1].reshape(N, 1)               # (N, 1)
+            X_t = np.concatenate([X_t, extra], axis=1)
+            w_t = (at_risk[:, t - 1] * at_risk[:, t]).astype(np.float64)
+            rows.append(X_t)
+            targets.append(L_dyn[:, t, :])
+            weights.append(w_t)
+        X_L = np.vstack(rows); Y_L = np.vstack(targets); w_L = np.concatenate(weights)
+        self._beta_L, self._sd_L = [], []
+        for j in range(p_dyn):
+            beta_j, sd_j = _fit_linear(X_L, Y_L[:, j], w_L, l2=self.config.l2_L)
+            self._beta_L.append(beta_j)
+            self._sd_L.append(max(sd_j, 1e-6))
+        # lambda_j = β_L_j[-1]; report
+        lambdas = [b[-1] for b in self._beta_L]
+        print(
+            f"  [Spec ② shared RE] refit L: lambda_j (per L_dim) = "
+            f"{[f'{l:.3f}' for l in lambdas]}"
         )
 
     # ----- SVI fit for outcome -----
@@ -372,6 +449,11 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
                         X_hist = self._build_history_features(
                             L_cur, A_onehot, C_mc, t_idx=t, T=T,
                         )
+                        # Spec ②: append extra column lambda_j absorbs into the
+                        # last beta_L dim. Extra feature = b_subj^T B(t-1)
+                        if self._L_has_RE_col:
+                            re_col = (b_subj @ self._B_basis[t - 1]).reshape(M, 1)
+                            X_hist = np.concatenate([X_hist, re_col], axis=1)
                         L_new = np.empty_like(L_cur)
                         for j in range(p_dyn):
                             mu_j = X_hist @ self._beta_L[j]

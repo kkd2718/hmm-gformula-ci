@@ -84,6 +84,63 @@ def _one_posterior_one_bin(
     return cum_final.mean()
 
 
+@partial(jax.jit, static_argnames=("K_A_minus_1", "p_dyn", "p_stat", "T", "n_b"))
+def _one_posterior_one_bin_spec2(
+    rng_key: jax.Array,
+    beta: jnp.ndarray,
+    L_chol: jnp.ndarray,
+    B_basis: jnp.ndarray,
+    beta_L_aug: jnp.ndarray,                # (p_dyn, p_hist + 1) with lambda_j as last col
+    sd_L: jnp.ndarray,
+    L_t0: jnp.ndarray,
+    C_mc: jnp.ndarray,
+    A_onehot_dropped: jnp.ndarray,
+    *, K_A_minus_1: int, p_dyn: int, p_stat: int, T: int, n_b: int,
+) -> jnp.ndarray:
+    """Spec ② counterfactual: forward L sim uses augmented beta_L
+    with extra column lambda_j * b_subj^T B(t-1). L now responds to RE."""
+    M = L_t0.shape[0]
+    K_re = B_basis.shape[1]
+    z = jr.normal(rng_key, shape=(n_b, M, K_re))
+    b = z @ L_chol.T                                    # (n_b, M, K_re)
+    random_logit = b @ B_basis.T                        # (n_b, M, T)
+
+    A_b = jnp.broadcast_to(A_onehot_dropped, (n_b, M, K_A_minus_1))
+    C_b = jnp.broadcast_to(C_mc, (n_b, M, p_stat))
+    L_t0_b = jnp.broadcast_to(L_t0, (n_b, M, p_dyn))
+
+    def step(carry, t):
+        L_prev, survived, cum, key = carry
+        bias_col = jnp.ones((n_b, M, 1))
+        t_col = jnp.full((n_b, M, 1), t / jnp.maximum(T - 1, 1))
+        # Spec ② extra column: b @ B(t-1), padded by B[0] at t=0 (irrelevant, L overridden)
+        B_idx = jnp.maximum(t - 1, 0)
+        re_col = jnp.einsum("nmk,k->nm", b, B_basis[B_idx]).reshape(n_b, M, 1)
+        X_hist = jnp.concatenate(
+            [bias_col, L_prev, A_b, C_b, t_col, re_col], axis=-1,
+        )
+        mu_L = jnp.einsum("nmh,jh->nmj", X_hist, beta_L_aug)
+        key, sub = jr.split(key)
+        noise = jr.normal(sub, shape=(n_b, M, p_dyn)) * sd_L
+        L_new = mu_L + noise
+        L_t = jnp.where(t == 0, L_t0_b, L_new)
+
+        X_out = jnp.concatenate([bias_col, A_b, L_t, C_b, t_col], axis=-1)
+        eta_fix = jnp.einsum("nmh,h->nm", X_out, beta)
+        logit_t = eta_fix + random_logit[:, :, t]
+        p_t = jax.nn.sigmoid(jnp.clip(logit_t, -30.0, 30.0))
+        cum_new = cum + survived * p_t
+        survived_new = survived * (1.0 - p_t)
+        return (L_t, survived_new, cum_new, key), None
+
+    L_init = jnp.zeros((n_b, M, p_dyn))
+    survived0 = jnp.ones((n_b, M))
+    cum0 = jnp.zeros((n_b, M))
+    init = (L_init, survived0, cum0, rng_key)
+    (_, _, cum_final, _), _ = jax.lax.scan(step, init, jnp.arange(T))
+    return cum_final.mean()
+
+
 def fre_nice_dose_response_jax(
     posterior: dict,
     B_basis: np.ndarray,
@@ -96,6 +153,7 @@ def fre_nice_dose_response_jax(
     n_posterior_subset: int = 200,
     n_b_draws_per_post: int = 5,
     seed: int = 0,
+    share_RE_on_L: bool = False,            # Spec ② flag
 ) -> np.ndarray:
     """JAX FRE-NICE dose_response. Returns (S, K_bins) risk matrix."""
     N, T, p_dyn = L_obs.shape
@@ -119,10 +177,11 @@ def fre_nice_dose_response_jax(
     sd_L = jnp.asarray(np.array(sd_L_list), dtype=jnp.float64)
     B_basis_j = jnp.asarray(B_basis, dtype=jnp.float64)
 
-    # vmap over posterior axis (S)
+    # Choose Spec ① (no L-RE) or Spec ② (shared RE on L) implementation
+    inner_fn = _one_posterior_one_bin_spec2 if share_RE_on_L else _one_posterior_one_bin
     in_axes = (0, 0, 0) + (None,) * 6
     vmapped = jax.vmap(
-        partial(_one_posterior_one_bin,
+        partial(inner_fn,
                 K_A_minus_1=K_A_minus_1, p_dyn=p_dyn, p_stat=p_stat, T=T, n_b=n_b),
         in_axes=in_axes,
     )

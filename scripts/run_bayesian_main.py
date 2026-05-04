@@ -64,9 +64,11 @@ def _save_state_fre(bench: FRENICEBayesianBenchmark, prefix: str, out_dir: Path)
         "n_bins": bench._n_bins, "n_dyn": bench._n_dyn,
         "n_static": bench._n_static, "t_max": bench._t_max,
         "n_groups": bench._n_groups,
+        "L_has_RE_col": int(bench._L_has_RE_col),
     }
-    # beta_L is a list of arrays (one per L_dyn dim) — same length so stack
     arr["beta_L"] = np.stack(bench._beta_L) if bench._beta_L else np.zeros((0, 0))
+    if bench._b_hat is not None:
+        arr["b_hat"] = bench._b_hat
     np.savez(out_dir / f"{prefix}_state.npz", **arr)
 
 
@@ -87,6 +89,10 @@ def _load_state_fre(
     bench._n_static = int(z["n_static"])
     bench._t_max = int(z["t_max"])
     bench._n_groups = int(z["n_groups"])
+    if "L_has_RE_col" in z.files:
+        bench._L_has_RE_col = bool(int(z["L_has_RE_col"]))
+    if "b_hat" in z.files:
+        bench._b_hat = z["b_hat"]
 
 
 def _save_risks(result, prefix: str, out_dir: Path) -> None:
@@ -168,6 +174,7 @@ def run_fre_nice(knots, prefix, cohort, target_bins, args, out_dir: Path,
         svi_steps=args.svi_steps, svi_lr=args.svi_lr,
         svi_n_posterior_draws=args.svi_posterior_draws,
         n_posterior_subset=args.n_posterior_subset,
+        share_RE_on_L=args.share_RE_on_L,
         n_b_draws_per_post=5, seed=args.seed + seed_offset,
     )
     bench = FRENICEBayesianBenchmark(cfg)
@@ -210,6 +217,9 @@ def main():
     parser.add_argument("--methods", nargs="+",
                         default=["xu", "K1", "K5"],
                         help="Subset of methods to run")
+    parser.add_argument("--share-RE-on-L", action="store_true",
+                        help="Spec ②: share FRE between Y and L equations "
+                             "(refit L with extra column lambda_j * b^T B(t))")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
