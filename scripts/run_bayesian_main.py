@@ -77,10 +77,14 @@ def main():
     parser.add_argument("--csv", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--n-bins", type=int, default=20)
+    parser.add_argument("--inference", choices=["nuts", "svi"], default="nuts")
     parser.add_argument("--n-warmup", type=int, default=1000)
     parser.add_argument("--n-samples", type=int, default=1000)
     parser.add_argument("--n-chains", type=int, default=4)
     parser.add_argument("--target-accept", type=float, default=0.95)
+    parser.add_argument("--svi-steps", type=int, default=8000)
+    parser.add_argument("--svi-lr", type=float, default=5e-3)
+    parser.add_argument("--svi-posterior-draws", type=int, default=2000)
     parser.add_argument("--n-b-draws", type=int, default=50)
     parser.add_argument("--n-posterior-subset", type=int, default=200)
     parser.add_argument("--seed", type=int, default=0)
@@ -109,8 +113,11 @@ def main():
     if "xu" in args.methods:
         print("\n=== Method 2: Xu Bayesian GLMM (scalar RE, MSM) ===")
         cfg = XuBayesianConfig(
+            inference=args.inference,
             n_warmup=args.n_warmup, n_samples=args.n_samples,
             n_chains=args.n_chains, target_accept=args.target_accept,
+            svi_steps=args.svi_steps, svi_lr=args.svi_lr,
+            svi_n_posterior_draws=args.svi_posterior_draws,
             n_b_draws=args.n_b_draws, n_posterior_subset=args.n_posterior_subset,
             seed=args.seed,
         )
@@ -125,9 +132,11 @@ def main():
     if "K1" in args.methods:
         print("\n=== Method 3: FRE-NICE Bayesian K=1 (scalar RE, NICE) ===")
         cfg = FRENICEBayesianConfig(
-            knots=(14.0,),
+            knots=(14.0,), inference=args.inference,
             n_warmup=args.n_warmup, n_samples=args.n_samples,
             n_chains=args.n_chains, target_accept=args.target_accept,
+            svi_steps=args.svi_steps, svi_lr=args.svi_lr,
+            svi_n_posterior_draws=args.svi_posterior_draws,
             n_posterior_subset=args.n_posterior_subset,
             n_b_draws_per_post=5, seed=args.seed + 1,
         )
@@ -142,9 +151,11 @@ def main():
     if "K5" in args.methods:
         print("\n=== Method 4: FRE-NICE Bayesian K=5 (functional RE, NICE) ===")
         cfg = FRENICEBayesianConfig(
-            knots=(0.0, 3.0, 7.0, 14.0, 21.0),
+            knots=(0.0, 3.0, 7.0, 14.0, 21.0), inference=args.inference,
             n_warmup=args.n_warmup, n_samples=args.n_samples,
             n_chains=args.n_chains, target_accept=args.target_accept,
+            svi_steps=args.svi_steps, svi_lr=args.svi_lr,
+            svi_n_posterior_draws=args.svi_posterior_draws,
             n_posterior_subset=args.n_posterior_subset,
             n_b_draws_per_post=5, seed=args.seed + 2,
         )

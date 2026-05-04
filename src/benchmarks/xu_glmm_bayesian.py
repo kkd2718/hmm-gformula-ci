@@ -44,7 +44,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpyro
 import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS
+from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
+from numpyro.infer.autoguide import AutoMultivariateNormal
+from numpyro import optim as numpyro_optim
 
 from ..data.ards import ARDSCohort
 from .base import BenchmarkMethod, DoseResponseResult, bin_centers_J_min
@@ -73,12 +75,25 @@ def _xu_bayesian_model(X: jnp.ndarray, y: jnp.ndarray, mask: jnp.ndarray,
 
 @dataclass
 class XuBayesianConfig:
-    """Sampler / counterfactual hyperparameters."""
+    """Sampler / counterfactual hyperparameters.
+
+    inference: "nuts" (full posterior, slow) or "svi" (variational, fast).
+    SVI uses AutoMultivariateNormal guide -> still Bayesian (variational
+    posterior approximation), with diagonal-plus-correlation Gaussian for
+    the joint posterior. Recommended fallback when NUTS infeasible.
+    """
+    inference: str = "nuts"           # "nuts" or "svi"
+    # NUTS parameters
     n_warmup: int = 1000
     n_samples: int = 1000
     n_chains: int = 4
     chain_method: str = "parallel"
     target_accept: float = 0.9
+    # SVI parameters
+    svi_steps: int = 5000
+    svi_lr: float = 1e-2
+    svi_n_posterior_draws: int = 2000  # samples drawn from variational posterior
+    # Counterfactual
     n_b_draws: int = 50              # MC draws over b per posterior sample
     n_posterior_subset: int = 200    # posterior draws used for counterfactual
     seed: int = 0
@@ -122,14 +137,17 @@ class XuGLMMBayesian(BenchmarkMethod):
         return X, y.astype(np.float64), m.astype(np.float64), group_idx
 
     # ------------------------------------------------------------------
-    # NUTS fit
+    # Fit dispatcher (NUTS or SVI)
     # ------------------------------------------------------------------
     def fit(self, cohort: ARDSCohort, **kwargs) -> None:
         X, y, m, group_idx = self._build_design(cohort)
         n_groups = int(group_idx.max() + 1)
         self._n_groups = n_groups
 
-        # MCMC
+        if self.config.inference == "svi":
+            self._fit_svi(X, y, m, group_idx, n_groups)
+            return
+        # NUTS path
         kernel = NUTS(_xu_bayesian_model, target_accept_prob=self.config.target_accept)
         mcmc = MCMC(
             kernel,
@@ -165,6 +183,43 @@ class XuGLMMBayesian(BenchmarkMethod):
             f"  [Xu Bayesian fit] sigma_b posterior mean = "
             f"{self._posterior['sigma_b'].mean():.4f}, "
             f"R-hat = {r_hat:.3f}, ESS = {n_eff:.0f}"
+        )
+
+    # ------------------------------------------------------------------
+    # SVI fit (Auto-MVN variational posterior)
+    # ------------------------------------------------------------------
+    def _fit_svi(self, X, y, m, group_idx, n_groups: int) -> None:
+        """Variational Bayesian inference via AutoMultivariateNormal guide.
+
+        Faster than NUTS but approximate. Posterior is the joint MVN that
+        best matches the true posterior in KL sense (variational).
+        """
+        guide = AutoMultivariateNormal(_xu_bayesian_model)
+        optimizer = numpyro_optim.Adam(step_size=self.config.svi_lr)
+        svi = SVI(_xu_bayesian_model, guide, optimizer, Trace_ELBO())
+        rng_key = jr.PRNGKey(self.config.seed)
+        svi_result = svi.run(
+            rng_key, self.config.svi_steps,
+            X=jnp.asarray(X), y=jnp.asarray(y), mask=jnp.asarray(m),
+            group_idx=jnp.asarray(group_idx), n_groups=n_groups,
+            progress_bar=False,
+        )
+        # Sample from variational posterior
+        post_key = jr.PRNGKey(self.config.seed + 1)
+        posterior = guide.sample_posterior(
+            post_key, svi_result.params,
+            sample_shape=(self.config.svi_n_posterior_draws,),
+        )
+        self._posterior = {
+            "beta": np.asarray(posterior["beta"]),
+            "sigma_b": np.asarray(posterior["sigma_b"]),
+        }
+        # Final ELBO from svi history
+        elbo_final = float(svi_result.losses[-1])
+        print(
+            f"  [Xu Bayesian SVI] sigma_b posterior mean = "
+            f"{self._posterior['sigma_b'].mean():.4f}, "
+            f"final ELBO loss = {elbo_final:.1f}"
         )
 
     # ------------------------------------------------------------------

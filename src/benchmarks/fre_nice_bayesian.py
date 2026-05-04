@@ -50,7 +50,9 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpyro
 import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS
+from numpyro.infer import MCMC, NUTS, SVI, Trace_ELBO
+from numpyro.infer.autoguide import AutoMultivariateNormal
+from numpyro import optim as numpyro_optim
 
 from ..data.ards import ARDSCohort
 from .base import BenchmarkMethod, DoseResponseResult, bin_centers_J_min
@@ -97,13 +99,23 @@ def _fre_nice_model(
 
 @dataclass
 class FRENICEBayesianConfig:
-    """Hyperparameters for FRE-NICE Bayesian benchmark."""
+    """Hyperparameters for FRE-NICE Bayesian benchmark.
+
+    inference: "nuts" (full posterior) or "svi" (variational, faster).
+    """
     knots: tuple[float, ...] = (0.0, 3.0, 7.0, 14.0, 21.0)
+    inference: str = "nuts"
+    # NUTS
     n_warmup: int = 1000
     n_samples: int = 1000
     n_chains: int = 4
     chain_method: str = "parallel"
     target_accept: float = 0.9
+    # SVI
+    svi_steps: int = 8000
+    svi_lr: float = 5e-3
+    svi_n_posterior_draws: int = 2000
+    # Counterfactual
     n_posterior_subset: int = 200
     n_b_draws_per_post: int = 5
     n_mc_subjects: int | None = None
@@ -200,10 +212,16 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
             self._beta_L.append(beta_j)
             self._sd_L.append(max(sd_j, 1e-6))
 
-        # 3) Bayesian outcome fit via NUTS
+        # 3) Bayesian outcome fit (NUTS or SVI dispatch)
         X_out, B_per_obs, y, mask, group_idx = self._build_outcome_design(cohort)
         n_groups = int(group_idx.max() + 1)
         self._n_groups = n_groups
+
+        if self.config.inference == "svi":
+            self._fit_outcome_svi(
+                X_out, B_per_obs, y, mask, group_idx, n_groups, K_re,
+            )
+            return
 
         kernel = NUTS(_fre_nice_model, target_accept_prob=self.config.target_accept)
         mcmc = MCMC(
@@ -242,6 +260,41 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
             f"  [FRE-NICE Bayesian fit] tau (per-basis-dim scale): "
             f"mean = {self._posterior['tau'].mean(axis=0)}, "
             f"R-hat max = {r_hat_max:.3f}"
+        )
+
+    # ----- SVI fit for outcome -----
+    def _fit_outcome_svi(
+        self, X_out, B_per_obs, y, mask, group_idx, n_groups: int, K_re: int,
+    ) -> None:
+        """Variational Bayesian inference via AutoMultivariateNormal."""
+        guide = AutoMultivariateNormal(_fre_nice_model)
+        optimizer = numpyro_optim.Adam(step_size=self.config.svi_lr)
+        svi = SVI(_fre_nice_model, guide, optimizer, Trace_ELBO())
+        rng_key = jr.PRNGKey(self.config.seed)
+        svi_result = svi.run(
+            rng_key, self.config.svi_steps,
+            X_outcome=jnp.asarray(X_out),
+            b_basis_per_obs=jnp.asarray(B_per_obs),
+            y=jnp.asarray(y), mask=jnp.asarray(mask),
+            group_idx=jnp.asarray(group_idx),
+            n_groups=n_groups, K_re=K_re,
+            progress_bar=False,
+        )
+        post_key = jr.PRNGKey(self.config.seed + 1)
+        posterior = guide.sample_posterior(
+            post_key, svi_result.params,
+            sample_shape=(self.config.svi_n_posterior_draws,),
+        )
+        self._posterior = {
+            "beta": np.asarray(posterior["beta"]),
+            "L_chol": np.asarray(posterior["L_chol"]),
+            "tau": np.asarray(posterior["tau"]),
+        }
+        elbo_final = float(svi_result.losses[-1])
+        print(
+            f"  [FRE-NICE SVI fit (K={K_re})] tau mean = "
+            f"{self._posterior['tau'].mean(axis=0)}, "
+            f"final ELBO loss = {elbo_final:.1f}"
         )
 
     # ----- counterfactual forward sim -----
