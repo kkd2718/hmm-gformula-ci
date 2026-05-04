@@ -15,6 +15,9 @@ from typing import Sequence
 
 import numpy as np
 import jax
+# Enable float64 to match numpy precision (avoids ~0.3-0.5%p drift in
+# cumulative incidence accumulation over T=28 timesteps).
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import jax.random as jr
 
@@ -105,16 +108,16 @@ def fre_nice_dose_response_jax(
     S_total = posterior["beta"].shape[0]
     S = min(n_posterior_subset, S_total)
     idx = rng_master.choice(S_total, size=S, replace=False)
-    beta_post = jnp.asarray(posterior["beta"][idx], dtype=jnp.float32)
-    L_chol_post = jnp.asarray(posterior["L_chol"][idx], dtype=jnp.float32)
+    beta_post = jnp.asarray(posterior["beta"][idx], dtype=jnp.float64)
+    L_chol_post = jnp.asarray(posterior["L_chol"][idx], dtype=jnp.float64)
 
     M = N
     idx0 = rng_master.integers(0, N, size=M)
-    L_t0 = jnp.asarray(L_obs[idx0, 0, :], dtype=jnp.float32)
-    C_mc = jnp.asarray(C_static[idx0], dtype=jnp.float32)
-    beta_L = jnp.asarray(np.stack(beta_L_list), dtype=jnp.float32)
-    sd_L = jnp.asarray(np.array(sd_L_list), dtype=jnp.float32)
-    B_basis_j = jnp.asarray(B_basis, dtype=jnp.float32)
+    L_t0 = jnp.asarray(L_obs[idx0, 0, :], dtype=jnp.float64)
+    C_mc = jnp.asarray(C_static[idx0], dtype=jnp.float64)
+    beta_L = jnp.asarray(np.stack(beta_L_list), dtype=jnp.float64)
+    sd_L = jnp.asarray(np.array(sd_L_list), dtype=jnp.float64)
+    B_basis_j = jnp.asarray(B_basis, dtype=jnp.float64)
 
     # vmap over posterior axis (S)
     in_axes = (0, 0, 0) + (None,) * 6
@@ -130,7 +133,7 @@ def fre_nice_dose_response_jax(
         A_full = np.zeros((M, K_A), dtype=np.float32)
         A_full[:, k] = 1.0
         keep = [j for j in range(K_A) if j != ref_bin]
-        A_dropped = jnp.asarray(A_full[:, keep], dtype=jnp.float32)
+        A_dropped = jnp.asarray(A_full[:, keep], dtype=jnp.float64)
         rng_root, sub = jr.split(rng_root)
         keys = jr.split(sub, S)
         risks = vmapped(
