@@ -322,13 +322,9 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         T = self._t_max
         p_dyn = self._n_dyn
         L_dyn = cohort.L_dyn.numpy().astype(np.float64)
-        A_bin_full = cohort.A_bin.numpy().astype(np.float64)
-        ref = self.config.ref_bin
-        if ref is not None and 0 <= ref < K_A:
-            keep_bins = [k for k in range(K_A) if k != ref]
-            A_bin = A_bin_full[:, :, keep_bins]
-        else:
-            A_bin = A_bin_full
+        # Use FULL A_bin (K_A); _build_history_features drops ref once internally.
+        # Pre-dropping here would cause double-drop (drops 2 columns instead of 1).
+        A_bin = cohort.A_bin.numpy().astype(np.float64)
         C_static = cohort.C_static.numpy().astype(np.float64)
         at_risk = cohort.at_risk.numpy().astype(np.float64).squeeze(-1)
 
