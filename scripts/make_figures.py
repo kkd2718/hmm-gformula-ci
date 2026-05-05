@@ -62,7 +62,7 @@ def fig3_dose_response(args):
         if "K=5" in label:
             ax2.plot(c, rm, "-", color=colors[label], linewidth=2.0, label="Posterior mean")
             ax2.fill_between(c, lo, hi, color=colors[label], alpha=0.25,
-                             label="95% credible band")
+                             label="95% credible interval")
     from matplotlib.ticker import FixedLocator, FixedFormatter
     xticks = [1, 3, 10, 17, 30]
     for ax in (ax1, ax2):

@@ -42,14 +42,14 @@ nonlinear dose-response** of mechanical power on 28-day mortality in ARDS,
 with marked acceleration above the Costa et al. (2021) clinical cutoff
 of approximately 17 J/min.
 
-![Dose-response: 4-method comparison and K=5 with credible band](results/figures/fig3_dose_response.png)
+![Dose-response: 4-method comparison and K=5 with credible interval](results/figures/fig3_dose_response.png)
 
 Left: four-method overlay on log-MP axis. Standard NICE
 (grey, frequentist), K=1 NICE Bayesian (blue), and K=5 FRE-NICE Bayesian
 (red) cluster tightly above approximately 6 J/min; the Xu (2024) Bayesian
 GLMM (orange, observed-L plug-in) is essentially flat. Dashed vertical
 line marks the Costa et al. (2021) 17 J/min clinical cutoff. Right: K=5
-posterior mean with 95% credible band.
+posterior mean with 95% credible interval.
 
 | MP exposure (J/min) | 28-day mortality (95% CrI) |
 |---|---|
