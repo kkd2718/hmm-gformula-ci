@@ -1,169 +1,226 @@
-# Dynamic Causal Inference in Healthcare: From Simulation to Intensive Care
-### Correcting Time-Varying Confounding via Latent State Modeling
+# Bayesian Functional Random-Effect NICE g-formula
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![JAX](https://img.shields.io/badge/JAX-0.4+-orange.svg)](https://jax.readthedocs.io)
+[![numpyro](https://img.shields.io/badge/numpyro-0.13+-red.svg)](https://num.pyro.ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 📌 Overview
-
-This repository contains the official implementation of the Master's Thesis: **"Dynamic Causal Inference of Mechanical Power in Severe ARDS: A Latent State Modeling Approach."**
-
-We propose a **Continuous-Time Hidden Markov Model (HMM)** framework to address **Time-Varying Confounding** (e.g., Weaning Bias, Sick-Quitter Bias) in longitudinal medical data. This repository consists of two main studies:
-
-1.  **Part I (Methodological Validation):** Verifying the model using a 20-year calibrated **Smoking-CVD Simulation** based on Korean epidemiological profiles (KoGES, KNHANES, KDCA).
-2.  **Part II (Clinical Application):** Investigating the dynamic causal effect of Mechanical Power in mechanically ventilated ARDS patients using the **MIMIC-IV** database.
+Causal effect of mechanical power on 28-day mortality in acute respiratory
+distress syndrome — a retrospective cohort study using a Bayesian g-formula
+with **functional random effects on the outcome hazard**.
 
 ---
 
-## 📐 Methodology: Implementation Details
+## Overview
 
-To overcome the limitations of static models, we implemented a **Dynamic Latent State Model** using PyTorch.
+This repository implements a **Bayesian parametric g-formula** (NICE) with a
+subject-specific time-varying functional random effect (FRE) on the outcome
+hazard, parameterized via a natural cubic spline basis. The proposed method
+generalizes the scalar random intercept of Xu et al. (2024) to a finite-rank
+random function on the day grid, anchored in functional data analysis (Yao,
+Müller & Wang, 2005) and generalized additive mixed modeling (Wood, 2017).
 
-### 1. Latent State Transition (Bias Correction)
-We infer a latent physiological state $Z_t$ (e.g., true disease severity) that evolves over time.
-The state transition is driven by the previous state, current intervention ($A$), dynamic covariates ($X_{dyn}$), and **static baseline characteristics** ($X_{static}$).
-
-$$Z_t = \psi Z_{t-1} + \gamma_A A_t + \gamma_{dyn} \mathbf{X}_{dyn, t} + \gamma_{static} \mathbf{X}_{static} + \varepsilon_t, \quad \varepsilon \sim \mathcal{N}(0, \sigma_Z^2)$$
-
-### 2. Outcome Model: Detecting Non-Linearity (U-Shape)
-The mortality risk $Y_t$ is modeled using a **Piecewise Constant Function** $f(A_t)$ for the intervention (Mechanical Power).
-
-$$\text{logit} P(Y_t=1) = \beta_0 + \beta_Z Z_t + \underbrace{f(A_t)}_{\text{Binned MP}} + \beta_{dyn} \mathbf{X}_{dyn, t} + \beta_{static} \mathbf{X}_{static} + \beta_{time} t$$
-
-* **$f(A_t)$ (Binned MP):** Divides Mechanical Power into $K$ bins. This allows the model to learn flexible, non-linear relationships (e.g., U-shape) instead of forcing a linear assumption.
-
-### 3. Smoothness Regularization (Strength Borrowing)
-To prevent overfitting in bins with sparse data, we apply a **Smoothness Penalty**. This forces adjacent bins to have similar coefficients, enabling stable estimation even with limited samples.
-
-$$\mathcal{L} = \mathcal{L}_{\text{NLL}} + \lambda \sum_{k=1}^{K-1} (\beta_{k+1} - \beta_k)^2 + \lambda_{reg} \sigma_Z^2$$
-
-### 4. EM-Style Optimization (Learning Latent Stochasticity)
-A naive end-to-end backpropagation approach fails in this setting because computing $Z$ deterministically prevents the state noise parameter ($\sigma_Z$) from receiving proper gradients, causing a mismatch between training and Monte Carlo g-formula simulations. 
-
-To resolve this, we implemented an **Expectation-Maximization (EM)-style training loop**:
-* **E-step (Forward Filtering):** The latent state $Z$ is estimated using an approximate Kalman filter. Here, the state noise $\sigma_Z$ directly influences the Kalman gain. The filtered state $Z_{filtered}$ is then **detached** from the computational graph.
-* **M-step (Loss Optimization):** The detached $Z_{filtered}$ is used to compute the negative log-likelihood (NLL) and update the outcome parameters. To prevent variance collapse, the transition parameters ($\psi$, $\gamma$) are optimized using a detached MSE loss, while $\sigma_Z$ is rigorously optimized via a decoupled NLL.
+The repository accompanies a master's thesis on the dose-response of
+mechanical power (MP, J/min) and 28-day in-hospital mortality in ARDS,
+estimated on MIMIC-IV v3.1 (N = 17,878 ICU stays, 15,619 unique subjects).
 
 ---
 
-## 🧬 Part I: Methodological Validation (Simulation)
+## Methodological highlights
 
-> **"Can HMM recover true causal effects in the presence of unmeasured confounding?"**
+### Estimand and identification
 
-We validated the model using a 20-year **Smoking Cessation & CVD** simulation calibrated to the Korean population. The goal was to correct for "Sick-Quitter Bias" and accurately capture Gene-Environment (GxE) interactions.
+Under sequential exchangeability, positivity, and consistency, the
+counterfactual cumulative incidence under sustained MP exposure regime
+$\bar a = (a_1, \dots, a_T)$ is
 
-### Validation Results (Tables 1-3 & Figure 1)
+$$
+\Pr\{Y^{\bar a}=1\} = \mathbb{E}_V\,\mathbb{E}_{L_1\mid V}\,\cdots
+\sum_{t=1}^{T} \Pr(Y_t=1 \mid Y_{t-1}=0,\, \bar L_t,\, V;\, \bar A_t = \bar a_t)
+\prod_{s=1}^{t-1}\Pr(Y_s=0\mid\cdot).
+$$
 
-* **Parameter Recovery:** The proposed HMM successfully recovered the true $\beta_{GS}$ interaction parameter, outperforming standard Markov g-formula and Cox PH models, which suffered from attenuation bias due to unmeasured latent severity.
-* **Effect Modification & Urgency of Cessation:**
+### 4-method ladder
 
-| A. Effect Modification by Genetic Risk (PRS) | B. Urgency of Smoking Cessation |
-| --- | --- |
-| ![Curve A](study_1_koges_simulation/results/curve_a_prs_effect_95ci.png) | ![Curve B](study_1_koges_simulation/results/curve_b_quit_timing_95ci.png) |
-| Higher genetic risk amplifies the harm of smoking. | Earlier cessation confers substantially greater benefits. |
+| # | Method | RE structure | $L$ handling |
+|---|---|---|---|
+| 1 | Standard NICE g-formula | none | forward $L$ simulation |
+| 2 | Xu Bayesian GLMM (2024) | scalar intercept | observed $L$ plug-in (MSM) |
+| 3 | K=1 FRE-NICE | scalar (= Xu RE in NICE framework) | forward $L$ simulation |
+| 4 | **K=5 FRE-NICE** (primary) | **functional via spline basis** | forward $L$ simulation |
+
+The outcome model for FRE-NICE is
+
+$$
+\operatorname{logit}\,\Pr(Y_t=1\mid\cdot)
+= \alpha_0 + \alpha_A^{\top} A_t + \alpha_L^{\top} L_t
++ \alpha_V^{\top} V + b_i^{\top} B(t),
+$$
+
+where $B(t)$ is a QR-orthonormalized natural cubic spline basis with knots at
+days {0, 3, 7, 14, 21}; $b_i \sim \mathcal{N}(0, \Sigma_b)$ with
+$\Sigma_b = \operatorname{diag}(\tau)\,\Omega\,\operatorname{diag}(\tau)$,
+$\tau \sim \operatorname{HalfCauchy}(0, 2.5)$, $\Omega \sim \operatorname{LKJ}(2)$.
+
+### Inference
+
+- Bayesian posterior via No-U-Turn Sampler (Hoffman & Gelman 2014) in
+  `numpyro` (Bingham et al. 2019). 2 chains × (1,000 warm-up + 1,000 sample),
+  target acceptance 0.95.
+- Counterfactual dose-response computed by JAX vmap + scan (vectorized over
+  posterior × subject × time), $\sim$ 144× speedup over the NumPy reference.
+- Cluster-level (per-subject) log-likelihood recorded for WAIC and
+  PSIS-LOO model comparison (Watanabe 2010; Vehtari et al. 2017, §4).
 
 ---
 
-## 🏥 Part II: Clinical Application (Severe ARDS)
-
-> **"Does lower Mechanical Power always lead to better survival?"**
-
-We applied our HMM framework to **17,584 mechanically ventilated ARDS patients** in the MIMIC-IV database. The primary goal is to correct for **Weaning Bias**—where clinicians lower MP for improving patients—which distorts the true causal relationship in standard analyses.
-
-### Clinical Findings (Tables 4-6 & Figures 2-4)
-
-* **Baseline Characteristics (Figure 2 & Table 4):** Successfully stratified patients into Mild, Moderate, and Severe ARDS based on the Berlin Definition. 
-* **Optimal Range & U-Shape (Figure 3A & Table 5):** The Proposed Model successfully identified an optimal MP range at **9.5 J/min** showcasing recruitment benefits, fundamentally diverging from the linear "Lower is Better" assumption (~5.0 J/min) of standard Cox PH models.
-* **Clinical Impact:** Maintaining MP at the optimal 9.5 J/min compared to a reference of 17 J/min yielded an **Absolute Risk Reduction (ARD) of 11.8%** and a **Number Needed to Treat (NNT) of 8.5**.
-
-| A. Clinical Paradigm Shift | B. Methodological Ablation |
-| --- | --- |
-| ![Figure 2A](study_2_ards_mimic/results/Figure2A_Main_Result.png) | ![Figure 2B](study_2_ards_mimic/results/Figure2B_Ablation.png) |
-| Identifying the optimal MP range (9.5 J/min) against the linear Cox PH assumption. | Demonstrating the necessity of both Latent State and Smoothing components. |
-
-* **Methodological Robustness (Figure 3B):** In the ablation study, the U-shaped morphology remained highly stable across both the fully adjusted Continuous HMM and the standard parametric g-formula ('Proposed w/o Latent State'). The removal of the smoothness penalty ('Proposed w/o Smoothing', $\lambda=0$) resulted in severe overfitting (jagged curves and inflated CI), confirming the necessity of the bin-regularization technique.
-* **Subgroup Analysis by Severity (Figure 4 & Table 6):** Stratification revealed distinct morphological shifts in risk trajectories across Mild, Moderate, and Severe ARDS, highlighting the critical need for personalized mechanical ventilation strategies.
-
----
-
-## 📂 Repository Structure
-
-```text
-hmm-gformula-ci/
-├── models/                       # [Core] Shared Models
-│   ├── dynamic_hmm.py            # Latent State-Space Model for ARDS (v4.0)
-│   ├── hmm_gformula.py           # Hidden Markov based g-formula (v3.2)
-│   └── baseline_methods.py       # Naive/Pooled Logistic, MSM-IPTW, Time-varying
-│
-├── study_1_koges_simulation/     # [Part I] Method Validation
-│   ├── run_experiments.py        # Exp Integration Suite
-│   ├── config.py                 # 20-Year KoGES Calibrated Parameters
-│   ├── data_generator.py         # DGP with Time Effects (Aging/Cessation)
-│   ├── analysis_advanced.py      # Spline Curves & Bootstrap CI
-│   └── results/                  # Tables 1-3 & Figure 1 outputs
-│
-├── utils/                        # [Utilities] Shared Tools
-│   ├── metrics.py                # Bias, RMSE, Coverage, Power
-│   └── visualization.py          # Recovery, Convergence & Trade-off Plots
-│
-└── study_2_ards_mimic/           # [Part II] Clinical Application
-    ├── main.py                   # Main Analysis (Tables 5-6, Figs 3-4)
-    ├── make_table1.py            # Generates Table 4 (Baseline Characteristics)
-    ├── mimic-extract.py          # MIMIC-IV Extraction (Berlin + Gattinoni MP)
-    ├── hmm-processing.py         # Tensor Conversion for PyTorch
-    └── results/                  # Clinical Output Directory
+## Repository layout
 
 ```
+.
+├── _draft/                             # Manuscript drafts (not for code)
+│   └── manuscript/                     # Section-by-section + interpretation
+├── data/                               # Cohort CSV (not committed)
+├── legacy/                             # Earlier exploration (HMM, VEM-SSM, etc.)
+├── results/                            # Posterior states + dose-response + tables
+│   ├── bayesian_main_v2/               #   Primary K=5 NUTS posterior
+│   ├── bayesian_jax/                   #   Primary dose-response (JAX)
+│   ├── knot_sensitivity/               #   K=4, K=6 knot sensitivity
+│   ├── loco_K5/, loco_K1/              #   Leave-one-covariate-out (12 each)
+│   ├── loglik_main/                    #   Refits with log_lik for WAIC/LOO
+│   ├── ppc_K5/                         #   Held-out 20% PPC
+│   ├── prior_sens_gamma/               #   Gamma vs HalfCauchy prior sensitivity
+│   ├── bayesian_spec2/                 #   Spec II ablation (shared RE on L)
+│   ├── subgroup/                       #   9 subgroup dose-response
+│   ├── positivity/                     #   Per-bin sample sizes
+│   ├── figures/                        #   Fig 3 + Fig 4 PNG/PDF
+│   ├── standard_v2/                    #   Standard frequentist NICE
+│   └── appendix_g/                     #   Standard + Xu LOCO (legacy)
+├── scripts/                            # Active analysis scripts
+├── src/
+│   ├── benchmarks/                     # Method classes
+│   ├── data/                           # Cohort assembly (ARDS)
+│   └── models/                         # Spline basis, etc.
+├── tests/
+├── README.md
+└── requirements.txt
+```
+
+### Active scripts (`scripts/`)
+
+| Script | Purpose |
+|---|---|
+| `run_bayesian_main.py` | NUTS/SVI fit + dose-response runner; phase-based execution |
+| `run_jax_dose.py` | JAX dose-response from saved posterior state |
+| `compute_waic_loo.py` | WAIC + PSIS-LOO from saved log_lik states |
+| `extract_diagnostics.py` | R-hat / ESS / divergent counts table |
+| `make_figures.py` | Fig 3 (dose-response), Fig 4 (subgroup forest) |
+| `make_table1.py` | Table 1 baseline characteristics |
+| `make_holdout_split.py` | Subject-stratified 80/20 holdout for PPC |
+| `ppc_holdout.py` | Posterior predictive check on held-out 20% |
+| `positivity_check.py` | Per-bin covariate distribution + sample sizes |
+| `subgroup_jax_dose.py` | Subgroup-stratified dose-response |
+| `validate_bayesian_natural_course.py` | Natural-course calibration |
+| `unit_test_numpy_vs_jax.py` | Numerical equivalence test |
+| `round2_chain_c.sh` | Orchestrator: 4 NUTS fits + WAIC + diagnostics + PPC |
+
+### Source modules (`src/`)
+
+- `src/data/ards.py` — MIMIC-IV ARDS cohort assembly, 20-bin MP discretization.
+- `src/models/spline_glmm.py` — natural cubic spline basis (QR-orthonormalized).
+- `src/benchmarks/standard_gformula.py` — frequentist NICE g-formula.
+- `src/benchmarks/xu_glmm_bayesian.py` — Bayesian Xu MSM (scalar RE).
+- `src/benchmarks/fre_nice_bayesian.py` — Bayesian K=1 / K=5 FRE-NICE g-formula.
+- `src/benchmarks/dose_response_jax.py` — GPU-accelerated counterfactual.
 
 ---
 
-## 🚀 Usage
-
-### Requirements
-
-Please ensure you install the required packages. Note that `lifelines` is required for the Cox PH baseline comparison.
+## Quick start
 
 ```bash
+# Environment
 pip install -r requirements.txt
-pip install lifelines
 
-```
+# Fit primary K=5 (V100 GPU recommended; ~8 min)
+python scripts/run_bayesian_main.py \
+    --csv data/ards_v31_v4.csv --out-dir results/bayesian_main_v2 \
+    --inference nuts --n-warmup 1000 --n-samples 1000 --n-chains 2 \
+    --target-accept 0.95 --n-posterior-subset 200 \
+    --methods K5 --phase fit
 
-### 1. Run Simulation Validation (Part I)
+# Dose-response (JAX, ~0.6 min on V100)
+python scripts/run_jax_dose.py \
+    --csv data/ards_v31_v4.csv --state-dir results/bayesian_main_v2 \
+    --out-dir results/bayesian_jax --prefix fre_nice_K5
 
-```bash
-# Run full simulation suite
-python study_1_koges_simulation/run_experiments.py --all
+# WAIC / PSIS-LOO (after K=1, K=5, Xu fits with --record-loglik)
+python scripts/compute_waic_loo.py \
+    --state-files results/loglik_main/fre_nice_K1_state.npz \
+                  results/loglik_main/fre_nice_K5_state.npz \
+                  results/loglik_main/xu_bayesian_state.npz \
+    --labels "K=1 NICE" "K=5 FRE-NICE" "Xu Bayesian" \
+    --out-md results/loglik_main/waic_loo_table.md
 
-# Run advanced causal analysis (Spline Curves with 95% CI)
-python study_1_koges_simulation/analysis_advanced.py
-
-```
-
-### 2. Run ARDS Analysis (Part II)
-
-*Note: Access to the MIMIC-IV database is required. Paths must be configured in `mimic-extract.py`.*
-
-```bash
-# 1. Preprocessing (Cohort Extraction & Tensor Conversion)
-python study_2_ards_mimic/mimic-extract.py
-python study_2_ards_mimic/hmm-processing.py
-
-# 2. Generate Table 4 (Baseline Characteristics)
-python study_2_ards_mimic/make_table1.py
-
-# 3. Run Main Experiments (HMM Training & Simulation)
-python study_2_ards_mimic/main.py
-
+# All sensitivity analyses (full overnight pipeline)
+bash scripts/round2_chain_c.sh
 ```
 
 ---
 
-## 📝 Citation
+## Key empirical findings
 
-If you find this code useful, please cite:
+- Sustained MP at 22.6 J/min (bin 17): 28-day cumulative incidence
+  46.1% (95% CrI 38.9–52.4) under K=5 FRE-NICE.
+- Reference cutoff (Costa et al. 2021, ~17 J/min): 37.3% (32.8–41.4).
+- Low-MP regime (~2.7 J/min): 8.0% (5.5–11.4).
+- WAIC / PSIS-LOO decisively prefer K=5 over K=1 ($\Delta$ELPD $+641$).
+- Spec II ablation (shared RE on $L$): $|\lambda_j| \le 0.011$ for all $L$ — the
+  Y-only random-effect specification is parsimonious and sufficient.
+- Knot sensitivity (K = 4, 5, 6): dose-response stable within $\pm 0.3$ p.p.
+- Posterior predictive check (held-out 20%): day-by-day calibration
+  within $\pm 3$ p.p. across the 28-day course.
+- E-value at the canonical low-vs-reference contrast: 8.71 (point), 7.23
+  (CI bound) — the observed effect is highly robust to unmeasured confounding.
 
-> **Kiduk Kim et al**. "Dynamic Causal Inference of Mechanical Power in Severe ARDS: A Latent State Modeling Approach." Master's Thesis, Graduate School of Public Health, Yonsei University, 2026.
+---
 
-```
+## Reproducibility
+
+- **Data**: MIMIC-IV v3.1 (PhysioNet credentialed access). Cohort assembly
+  in `src/data/ards.py`; the resulting CSV is not redistributed.
+- **Random seeds**: fixed in all scripts (default 0, with method-specific
+  offsets).
+- **Numerics**: `jax_enable_x64` is forced on for dose-response computation
+  to ensure NumPy-equivalent precision.
+- **Convergence**: across all primary NUTS fits, $\hat R \le 1.08$ and zero
+  divergent transitions.
+- **Posterior states (FRE weights)** for all primary fits and sensitivity
+  analyses are saved as `results/**/*_state.npz` (32 of 35 committed; the
+  three loglik-recording states exceed GitHub's 100 MB limit and are
+  gitignored — regenerate with `--record-loglik`).
+
+---
+
+## Citing
+
+If using this codebase, please cite the master's thesis (forthcoming) and
+the methodological anchors:
+
+- Robins, J. M. (1986). A new approach to causal inference in mortality
+  studies with a sustained exposure period. *Mathematical Modelling*, 7,
+  1393–1512.
+- Xu, Y., et al. (2024). GLMM-based g-computation for clustered
+  longitudinal data. *Biometrics*, 80(3), ujae100.
+- Yao, F., Müller, H.-G., & Wang, J.-L. (2005). Functional data analysis
+  for sparse longitudinal data. *JASA*, 100, 577–590.
+- Wood, S. N. (2017). *Generalized Additive Models: An Introduction with R*
+  (2nd ed.). CRC Press.
+- Costa, R., et al. (2021). Mechanical power and 28-day mortality in
+  mechanically ventilated patients. *AJRCCM*, 204(3), 303–311.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE) (if absent, MIT is intended; please confirm
+with the maintainer).

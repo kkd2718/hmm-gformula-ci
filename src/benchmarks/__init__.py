@@ -1,22 +1,24 @@
 """Benchmark methods for the 4-way ARDS-MP causal comparison.
 
-Methods (post-Bayesian-pivot):
-  1. StandardGFormula             — frequentist NICE g-formula, no RE (baseline)
-  2. XuGLMMBayesian               — Bayesian GLMM, scalar RE, MSM observed-L (Xu 2024)
-  3. FRENICEBayesianBenchmark(K=1)— Bayesian, scalar RE, NICE forward-L (= Xu's RE in NICE framework)
-  4. FRENICEBayesianBenchmark(K=5)— Bayesian, functional RE via spline, NICE (proposed)
+Methods (post-Bayesian-pivot, primary 4-method ladder):
+  1. StandardGFormula              — frequentist NICE g-formula, no RE (baseline)
+  2. XuGLMMBayesian                — Bayesian GLMM with scalar RE, MSM observed-L
+                                     plug-in (Xu 2024)
+  3. FRENICEBayesianBenchmark(K=1) — Bayesian, scalar RE, NICE forward-L
+                                     (mathematically equivalent in fitting to
+                                     XuGLMMBayesian outcome model; differs in
+                                     counterfactual computation)
+  4. FRENICEBayesianBenchmark(K=5) — Bayesian, functional RE via natural cubic
+                                     spline basis, NICE forward-L (proposed
+                                     primary method)
 
-Frequentist Laplace variants (xu_glmm.XuGLMM, spline_glmm_nice.SplineGLMMNICEBenchmark)
-retained for sensitivity / LOCO speed but not used as primary baseline.
+Legacy frequentist Laplace variants (xu_glmm.XuGLMM, spline_glmm_nice.*) and
+state-space-model proposed.* moved to legacy/scripts_v1/ during round-2
+cleanup; not used in primary analysis.
 """
 from .base import BenchmarkMethod, DoseResponseResult, bin_centers_J_min
 from .standard_gformula import StandardGFormula
-from .xu_glmm import XuGLMM                                  # legacy frequentist
 from .xu_glmm_bayesian import XuGLMMBayesian, XuBayesianConfig
-from .proposed import VEMSSMBenchmark, VEMConfig             # legacy SSM
-from .spline_glmm_nice import (
-    SplineGLMMNICEBenchmark, SplineGLMMNICEConfig,
-)                                                            # legacy frequentist
 from .fre_nice_bayesian import (
     FRENICEBayesianBenchmark, FRENICEBayesianConfig,
 )
@@ -24,9 +26,6 @@ from .fre_nice_bayesian import (
 __all__ = [
     "BenchmarkMethod", "DoseResponseResult", "bin_centers_J_min",
     "StandardGFormula",
-    "XuGLMM",                          # legacy
     "XuGLMMBayesian", "XuBayesianConfig",
-    "VEMSSMBenchmark", "VEMConfig",    # legacy
-    "SplineGLMMNICEBenchmark", "SplineGLMMNICEConfig",   # legacy
     "FRENICEBayesianBenchmark", "FRENICEBayesianConfig",
 ]
