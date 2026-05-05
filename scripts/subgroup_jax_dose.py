@@ -25,23 +25,47 @@ from src.benchmarks._resample import slice_cohort
 from src.benchmarks.dose_response_jax import fre_nice_dose_response_jax
 
 
-def define_subgroups(cohort) -> dict:
-    """Return dict of subgroup_name -> bool mask (N,)."""
+def define_subgroups(cohort, csv_path: Path) -> dict:
+    """Return dict of subgroup_name -> bool mask (N,) using clinical
+    reference cutoffs. C_static in cohort is z-scored, so original values
+    are reloaded from CSV and aligned to cohort stay_id order.
+
+    Reference cutoffs:
+      - Age >=65: WHO/general clinical older-adult definition
+      - BMI >=30: WHO Class I obesity (non-Asian populations); the
+        present cohort is MIMIC-IV (predominantly non-Asian)
+      - Charlson >=5: high comorbidity burden (Charlson 1987; multiple
+        validation studies threshold at 3-5; we use 5 to capture the
+        upper tail with greater clinical homogeneity)
+    """
+    import pandas as pd
     sev = cohort.severity_label
-    age = cohort.C_static.numpy()[:, 0]   # standardized age
-    bmi = cohort.C_static.numpy()[:, 2]   # BMI
-    charl = cohort.C_static.numpy()[:, 3] # Charlson
+    df = pd.read_csv(csv_path)
+    by_stay = df.sort_values(["stay_id", "day_num"]).groupby("stay_id").first().reset_index()
+    by_stay = by_stay.set_index("stay_id")
+    # Align to cohort.subject_ids stay ordering — assumes cohort.subject_ids
+    # is keyed by stay_id (as built in ards.py). If hash collision, use the
+    # cohort's internal stay order via reset() utility.
+    if hasattr(cohort, "stay_ids"):
+        order = cohort.stay_ids
+    else:
+        # Fallback: cohort.subject_ids order matches CSV first-seen order
+        order = sorted(df["stay_id"].unique())
+    aligned = by_stay.loc[order]
+    age = aligned["anchor_age"].to_numpy()
+    bmi = aligned["bmi_imputed"].to_numpy()
+    charl = aligned["charlson_index"].to_numpy()
 
     subs = {
         "mild": sev == "mild",
         "moderate": sev == "moderate",
         "severe": sev == "severe",
-        "age_high": age > 0.0,            # >mean age (~63 yr)
-        "age_low": age <= 0.0,
-        "bmi_high": bmi > 0.0,            # >mean BMI (~30)
-        "bmi_low": bmi <= 0.0,
-        "charlson_high": charl > 0.0,
-        "charlson_low": charl <= 0.0,
+        "age_geq65": age >= 65,
+        "age_lt65": age < 65,
+        "obese_geq30": bmi >= 30,
+        "non_obese_lt30": bmi < 30,
+        "charlson_geq5": charl >= 5,
+        "charlson_lt5": charl < 5,
     }
     return subs
 
@@ -70,7 +94,7 @@ def main():
     sd_L_list = list(state["sd_L"])
     K_A = int(state["n_bins"])
 
-    subgroups = define_subgroups(full)
+    subgroups = define_subgroups(full, args.csv)
     md = [
         "# Subgroup analysis: K=5 FRE-NICE dose-response",
         "",

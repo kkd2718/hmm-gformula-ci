@@ -103,21 +103,23 @@ def fig4_subgroup_forest(args):
     z = np.load(sub)
     names = [n.decode() if isinstance(n, bytes) else str(n) for n in z["names"]]
     rd = z["rd"]; rd_lo = z["rd_lo"]; rd_hi = z["rd_hi"]; ns = z["ns"]
-    # Order: severity, age, charlson, bmi
+    # Order: severity, age, BMI (obesity), Charlson (high-comorbidity)
     order = ["mild", "moderate", "severe",
-             "age_low", "age_high",
-             "charlson_low", "charlson_high",
-             "bmi_low", "bmi_high"]
+             "age_lt65", "age_geq65",
+             "non_obese_lt30", "obese_geq30",
+             "charlson_lt5", "charlson_geq5"]
     idx = [names.index(n) for n in order if n in names]
     fig, ax = plt.subplots(figsize=(8.5, 5))
     y = np.arange(len(idx))
-    # Subgroup cutoffs are at cohort means (z-score = 0):
-    # age = 62.9 yr, BMI = 30.6, Charlson = 3.65
+    # Subgroup cutoffs use clinical reference thresholds:
+    #   Age ≥ 65 yr (older adult, WHO)
+    #   BMI ≥ 30 (Class I obesity, WHO non-Asian)
+    #   Charlson ≥ 5 (high comorbidity load)
     label_pretty = {
         "mild": "Mild ARDS", "moderate": "Moderate ARDS", "severe": "Severe ARDS",
-        "age_low": "Age ≤ 63 yr", "age_high": "Age > 63 yr",
-        "charlson_low": "Charlson ≤ 3.65", "charlson_high": "Charlson > 3.65",
-        "bmi_low": "BMI ≤ 30.6", "bmi_high": "BMI > 30.6",
+        "age_lt65": "Age < 65 yr", "age_geq65": "Age ≥ 65 yr",
+        "non_obese_lt30": "BMI < 30 (non-obese)", "obese_geq30": "BMI ≥ 30 (obese)",
+        "charlson_lt5": "Charlson < 5", "charlson_geq5": "Charlson ≥ 5",
     }
     for i, j in enumerate(idx):
         ax.errorbar(rd[j], y[i],
