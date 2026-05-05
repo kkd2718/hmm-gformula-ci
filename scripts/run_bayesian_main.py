@@ -37,16 +37,23 @@ from src.benchmarks import (
 # State persistence helpers
 # ----------------------------------------------------------------------
 def _save_state_xu(bench: XuGLMMBayesian, prefix: str, out_dir: Path) -> None:
-    np.savez(
-        out_dir / f"{prefix}_state.npz",
-        beta=bench._posterior["beta"],
-        sigma_b=bench._posterior["sigma_b"],
-        n_groups=bench._n_groups,
-    )
+    arr = {
+        "beta": bench._posterior["beta"],
+        "sigma_b": bench._posterior["sigma_b"],
+        "n_groups": bench._n_groups,
+    }
+    if bench._log_lik is not None:
+        arr["log_lik"] = bench._log_lik
+    if bench._diagnostics is not None:
+        # Store as array of (key, value) string pairs for npz compatibility
+        items = list(bench._diagnostics.items())
+        arr["diagnostics_keys"] = np.array([k for k, _ in items], dtype=object)
+        arr["diagnostics_values"] = np.array([str(v) for _, v in items], dtype=object)
+    np.savez(out_dir / f"{prefix}_state.npz", **arr)
 
 
 def _load_state_xu(bench: XuGLMMBayesian, cohort, prefix: str, out_dir: Path) -> None:
-    z = np.load(out_dir / f"{prefix}_state.npz")
+    z = np.load(out_dir / f"{prefix}_state.npz", allow_pickle=True)
     bench._posterior = {
         "beta": z["beta"],
         "sigma_b": z["sigma_b"],
@@ -69,13 +76,21 @@ def _save_state_fre(bench: FRENICEBayesianBenchmark, prefix: str, out_dir: Path)
     arr["beta_L"] = np.stack(bench._beta_L) if bench._beta_L else np.zeros((0, 0))
     if bench._b_hat is not None:
         arr["b_hat"] = bench._b_hat
+    if bench._lambda_L is not None:
+        arr["lambda_L"] = bench._lambda_L
+    if bench._log_lik is not None:
+        arr["log_lik"] = bench._log_lik
+    if bench._diagnostics is not None:
+        items = list(bench._diagnostics.items())
+        arr["diagnostics_keys"] = np.array([k for k, _ in items], dtype=object)
+        arr["diagnostics_values"] = np.array([str(v) for _, v in items], dtype=object)
     np.savez(out_dir / f"{prefix}_state.npz", **arr)
 
 
 def _load_state_fre(
     bench: FRENICEBayesianBenchmark, cohort, prefix: str, out_dir: Path,
 ) -> None:
-    z = np.load(out_dir / f"{prefix}_state.npz")
+    z = np.load(out_dir / f"{prefix}_state.npz", allow_pickle=True)
     bench._posterior = {
         "beta": z["beta"],
         "L_chol": z["L_chol"],
@@ -144,6 +159,9 @@ def run_xu(cohort, target_bins, args, out_dir: Path):
         svi_steps=args.svi_steps, svi_lr=args.svi_lr,
         svi_n_posterior_draws=args.svi_posterior_draws,
         n_b_draws=args.n_b_draws, n_posterior_subset=args.n_posterior_subset,
+        sigma_b_prior=args.sigma_b_prior,
+        record_loglik=args.record_loglik,
+        holdout_subj_ids=tuple(args.holdout_subj_ids) if args.holdout_subj_ids else None,
         seed=args.seed,
     )
     bench = XuGLMMBayesian(cfg)
@@ -175,6 +193,9 @@ def run_fre_nice(knots, prefix, cohort, target_bins, args, out_dir: Path,
         svi_n_posterior_draws=args.svi_posterior_draws,
         n_posterior_subset=args.n_posterior_subset,
         share_RE_on_L=args.share_RE_on_L,
+        sigma_b_prior=args.sigma_b_prior,
+        record_loglik=args.record_loglik,
+        holdout_subj_ids=tuple(args.holdout_subj_ids) if args.holdout_subj_ids else None,
         n_b_draws_per_post=5, seed=args.seed + seed_offset,
     )
     bench = FRENICEBayesianBenchmark(cfg)
@@ -227,8 +248,23 @@ def main():
                         help="TV covariates to exclude (LOCO sensitivity)")
     parser.add_argument("--exclude-static", nargs="*", default=[],
                         help="Static covariates to exclude (LOCO sensitivity)")
+    parser.add_argument("--sigma-b-prior", default="halfcauchy",
+                        choices=["halfcauchy", "gamma", "invgamma"],
+                        help="Prior on sigma_b (RE scale) for sensitivity analysis")
+    parser.add_argument("--record-loglik", action="store_true",
+                        help="Record per-observation log_lik for WAIC/PSIS-LOO")
+    parser.add_argument("--holdout-subj-ids-file", type=Path, default=None,
+                        help="Path to .npy file with subject indices to hold out from fit (for PPC)")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve holdout subject IDs from optional file
+    if args.holdout_subj_ids_file is not None and args.holdout_subj_ids_file.exists():
+        args.holdout_subj_ids = list(map(int, np.load(args.holdout_subj_ids_file)))
+        print(f"  [holdout] loaded {len(args.holdout_subj_ids)} held-out subjects from "
+              f"{args.holdout_subj_ids_file}")
+    else:
+        args.holdout_subj_ids = None
 
     cohort = load_ards_cohort(ARDSConfig(
         csv_path=args.csv, n_bins=args.n_bins,

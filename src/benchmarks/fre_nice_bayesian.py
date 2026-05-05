@@ -64,18 +64,40 @@ def _fre_nice_model(
     X_outcome: jnp.ndarray, b_basis_per_obs: jnp.ndarray,
     y: jnp.ndarray, mask: jnp.ndarray,
     group_idx: jnp.ndarray, n_groups: int, K_re: int,
+    sigma_b_prior: str = "halfcauchy",
+    record_loglik: bool = False,
 ) -> None:
     """numpyro model for FRE-NICE outcome layer.
 
     X_outcome      : (N_obs, p)   design (intercept + A + L + V, no t-effect)
     b_basis_per_obs: (N_obs, K_re) spline basis evaluated at each row's t
+
+    sigma_b_prior  : prior on tau (per-basis-dim scale of subject RE).
+                     "halfcauchy" (default, scale 2.5),
+                     "gamma" (Gamma(2, 0.5) — concentration & rate),
+                     "invgamma" (InverseGamma(2, 1)).
+                     Used for Bayesian sensitivity analysis.
+    record_loglik  : if True, record per-observation log_lik as
+                     numpyro.deterministic for WAIC / PSIS-LOO computation.
     """
     p = X_outcome.shape[1]
     beta = numpyro.sample("beta", dist.Normal(jnp.zeros(p), 5.0))
-    # Sigma_b parameterized via LKJ correlation + Half-Cauchy scales.
-    # K_re == 1 special-case: LKJCholesky requires dim >= 2, fall back to
-    # plain HalfCauchy on a scalar (recovering Xu 2024's scalar RE prior).
-    tau = numpyro.sample("tau", dist.HalfCauchy(jnp.full((K_re,), 2.5)))
+    # Sigma_b parameterized via LKJ correlation + scale prior.
+    # K_re == 1 special-case: LKJCholesky requires dim >= 2.
+    if sigma_b_prior == "halfcauchy":
+        tau = numpyro.sample("tau", dist.HalfCauchy(jnp.full((K_re,), 2.5)))
+    elif sigma_b_prior == "gamma":
+        tau = numpyro.sample(
+            "tau", dist.Gamma(jnp.full((K_re,), 2.0), jnp.full((K_re,), 0.5)),
+        )
+    elif sigma_b_prior == "invgamma":
+        tau = numpyro.sample(
+            "tau", dist.InverseGamma(
+                jnp.full((K_re,), 2.0), jnp.full((K_re,), 1.0),
+            ),
+        )
+    else:
+        raise ValueError(f"Unknown sigma_b_prior: {sigma_b_prior}")
     if K_re == 1:
         L_chol = numpyro.deterministic("L_chol", tau.reshape(1, 1))
     else:
@@ -94,6 +116,8 @@ def _fre_nice_model(
     re_contrib = jnp.sum(b[group_idx] * b_basis_per_obs, axis=-1)
     logit = X_outcome @ beta + re_contrib
     log_p = mask * dist.Bernoulli(logits=logit).log_prob(y)
+    if record_loglik:
+        numpyro.deterministic("log_lik", log_p)
     numpyro.factor("loglik", log_p.sum())
 
 
@@ -120,6 +144,9 @@ class FRENICEBayesianConfig:
     inference: str = "nuts"
     ref_bin: int = 16
     share_RE_on_L: bool = False
+    sigma_b_prior: str = "halfcauchy"   # halfcauchy | gamma | invgamma
+    record_loglik: bool = False         # for WAIC / PSIS-LOO
+    holdout_subj_ids: tuple[int, ...] | None = None  # for PPC: subjects to mask out of fit
     # NUTS
     n_warmup: int = 1000
     n_samples: int = 1000
@@ -158,6 +185,11 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         # Spec ② (share_RE_on_L) state: posterior-mean RE per subject
         self._b_hat: np.ndarray | None = None          # (n_groups, K_re) or None
         self._L_has_RE_col: bool = False               # True if β_L includes lambda_j
+        self._lambda_L: np.ndarray | None = None       # (p_dyn,) Spec ② per-L lambda
+        # Diagnostics (R-hat max, ESS bulk min, ESS tail min, divergent count)
+        self._diagnostics: dict | None = None
+        # Per-observation log_lik samples (S, N_obs) when record_loglik=True
+        self._log_lik: np.ndarray | None = None
 
     # ----- design assembly -----
     def _drop_ref_bins(self, cov: np.ndarray, K_A: int) -> np.ndarray:
@@ -255,6 +287,16 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         n_groups = int(group_idx.max() + 1)
         self._n_groups = n_groups
 
+        # Holdout: zero out mask for subjects in holdout_subj_ids (rows excluded
+        # from likelihood). Used for PPC: fit on 80%, predict held-out 20%.
+        if self.config.holdout_subj_ids is not None:
+            held = np.asarray(self.config.holdout_subj_ids, dtype=np.int64)
+            held_mask = np.isin(group_idx, held)
+            mask = mask.copy()
+            mask[held_mask] = 0.0
+            print(f"  [holdout] {len(held)} subjects masked from fit "
+                  f"({held_mask.sum()} of {len(mask)} obs)")
+
         if self.config.inference == "svi":
             self._fit_outcome_svi(
                 X_out, B_per_obs, y, mask, group_idx, n_groups, K_re,
@@ -278,6 +320,9 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
             y=jnp.asarray(y), mask=jnp.asarray(mask),
             group_idx=jnp.asarray(group_idx),
             n_groups=n_groups, K_re=K_re,
+            sigma_b_prior=self.config.sigma_b_prior,
+            record_loglik=self.config.record_loglik,
+            extra_fields=("diverging",),
         )
         samples_flat = mcmc.get_samples()
         self._posterior = {
@@ -288,24 +333,48 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         # Extract posterior mean of subject-level FRE for Spec ② refit
         if "b" in samples_flat:
             self._b_hat = np.asarray(samples_flat["b"]).mean(axis=0)  # (n_groups, K_re)
+        # Per-observation log_lik samples (S, N_obs) for WAIC/PSIS-LOO
+        if "log_lik" in samples_flat:
+            self._log_lik = np.asarray(samples_flat["log_lik"])
 
         # ----- Spec ②: refit L equations with shared RE on L -----
         if self.config.share_RE_on_L and self._b_hat is not None:
             self._refit_L_with_shared_RE(cohort, K_A, K_re)
             self._L_has_RE_col = True
+        # Convergence diagnostics: R-hat max, min ESS, divergent count.
         from numpyro.diagnostics import summary
+        diag_summary: dict = {}
         try:
             samples_chains = mcmc.get_samples(group_by_chain=True)
             diag = summary(samples_chains, prob=0.95)
+            rhat_all, ess_all = [], []
+            for k, v in diag.items():
+                rhat_all.extend(np.asarray(v.get("r_hat", [])).ravel().tolist())
+                ess_all.extend(np.asarray(v.get("n_eff", [])).ravel().tolist())
+            diag_summary["r_hat_max"] = float(np.nanmax(rhat_all)) if rhat_all else float("nan")
+            diag_summary["r_hat_p95"] = float(np.nanpercentile(rhat_all, 95)) if rhat_all else float("nan")
+            diag_summary["ess_min"] = float(np.nanmin(ess_all)) if ess_all else float("nan")
+            diag_summary["ess_median"] = float(np.nanmedian(ess_all)) if ess_all else float("nan")
+            diag_summary["n_params_with_rhat"] = len(rhat_all)
             tau_diag = diag.get("tau", {})
-            rhat_arr = np.asarray(tau_diag.get("r_hat", np.array([np.nan])))
-            r_hat_max = float(rhat_arr.max())
+            r_hat_max_tau = float(np.asarray(tau_diag.get("r_hat", [np.nan])).max())
+        except Exception as e:
+            diag_summary = {"error": str(e)}
+            r_hat_max_tau = float("nan")
+        try:
+            extra = mcmc.get_extra_fields(group_by_chain=False)
+            div_count = int(np.asarray(extra.get("diverging", [0])).sum()) if extra else 0
+            diag_summary["divergent_count"] = div_count
         except Exception:
-            r_hat_max = float("nan")
+            diag_summary["divergent_count"] = -1
+        self._diagnostics = diag_summary
         print(
             f"  [FRE-NICE Bayesian fit] tau (per-basis-dim scale): "
             f"mean = {self._posterior['tau'].mean(axis=0)}, "
-            f"R-hat max = {r_hat_max:.3f}"
+            f"R-hat (tau) max = {r_hat_max_tau:.3f}, "
+            f"R-hat global max = {diag_summary.get('r_hat_max', float('nan')):.3f}, "
+            f"ESS min = {diag_summary.get('ess_min', float('nan')):.0f}, "
+            f"divergent = {diag_summary.get('divergent_count', -1)}"
         )
 
     # ----- Spec ② helpers: share RE on L -----
@@ -354,11 +423,13 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
             beta_j, sd_j = _fit_linear(X_L, Y_L[:, j], w_L, l2=self.config.l2_L)
             self._beta_L.append(beta_j)
             self._sd_L.append(max(sd_j, 1e-6))
-        # lambda_j = β_L_j[-1]; report
-        lambdas = [b[-1] for b in self._beta_L]
+        # lambda_j = β_L_j[-1]; report and save explicitly
+        lambdas = np.array([b[-1] for b in self._beta_L])
+        self._lambda_L = lambdas
         print(
             f"  [Spec ② shared RE] refit L: lambda_j (per L_dim) = "
-            f"{[f'{l:.3f}' for l in lambdas]}"
+            f"{[f'{l:.4f}' for l in lambdas]} "
+            f"(max abs = {np.max(np.abs(lambdas)):.4f})"
         )
 
     # ----- SVI fit for outcome -----

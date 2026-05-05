@@ -52,24 +52,39 @@ from ..data.ards import ARDSCohort
 from .base import BenchmarkMethod, DoseResponseResult, bin_centers_J_min
 
 
-def _xu_bayesian_model(X: jnp.ndarray, y: jnp.ndarray, mask: jnp.ndarray,
-                       group_idx: jnp.ndarray, n_groups: int) -> None:
+def _xu_bayesian_model(
+    X: jnp.ndarray, y: jnp.ndarray, mask: jnp.ndarray,
+    group_idx: jnp.ndarray, n_groups: int,
+    sigma_b_prior: str = "halfcauchy",
+    record_loglik: bool = False,
+) -> None:
     """numpyro model for Xu 2024 GLMM.
 
     X : (N_obs, p)  pooled design matrix (rows = subject-time)
     y : (N_obs,)    binary outcome
     mask : (N_obs,) at-risk indicator (0/1)
     group_idx : (N_obs,) integer subject index in [0, n_groups)
+    sigma_b_prior : halfcauchy | gamma | invgamma — prior sensitivity option
+    record_loglik : if True, record per-observation log_lik for WAIC/PSIS-LOO
     """
     p = X.shape[1]
     beta = numpyro.sample("beta", dist.Normal(jnp.zeros(p), 5.0))
-    sigma_b = numpyro.sample("sigma_b", dist.HalfCauchy(2.5))
+    if sigma_b_prior == "halfcauchy":
+        sigma_b = numpyro.sample("sigma_b", dist.HalfCauchy(2.5))
+    elif sigma_b_prior == "gamma":
+        sigma_b = numpyro.sample("sigma_b", dist.Gamma(2.0, 0.5))
+    elif sigma_b_prior == "invgamma":
+        sigma_b = numpyro.sample("sigma_b", dist.InverseGamma(2.0, 1.0))
+    else:
+        raise ValueError(f"Unknown sigma_b_prior: {sigma_b_prior}")
     # Non-centered parameterization for hierarchical prior (better mixing)
     z = numpyro.sample("z_b", dist.Normal(jnp.zeros(n_groups), 1.0))
     b = numpyro.deterministic("b", sigma_b * z)
     logit = X @ beta + b[group_idx]
     # Mask non-at-risk observations from likelihood
     log_p = mask * dist.Bernoulli(logits=logit).log_prob(y)
+    if record_loglik:
+        numpyro.deterministic("log_lik", log_p)
     numpyro.factor("loglik", log_p.sum())
 
 
@@ -88,6 +103,9 @@ class XuBayesianConfig:
     """
     inference: str = "nuts"           # "nuts" or "svi"
     ref_bin: int = 16
+    sigma_b_prior: str = "halfcauchy"  # halfcauchy | gamma | invgamma
+    record_loglik: bool = False        # for WAIC / PSIS-LOO
+    holdout_subj_ids: tuple[int, ...] | None = None  # for PPC
     # NUTS parameters
     n_warmup: int = 1000
     n_samples: int = 1000
@@ -117,6 +135,8 @@ class XuGLMMBayesian(BenchmarkMethod):
         self.config = config or XuBayesianConfig()
         self._posterior: dict | None = None
         self._n_groups: int = 0
+        self._diagnostics: dict | None = None
+        self._log_lik: np.ndarray | None = None
 
     # ------------------------------------------------------------------
     # Design construction (same shape as legacy XuGLMM)
@@ -156,6 +176,15 @@ class XuGLMMBayesian(BenchmarkMethod):
         n_groups = int(group_idx.max() + 1)
         self._n_groups = n_groups
 
+        # Holdout: zero out mask for subjects in holdout_subj_ids (PPC)
+        if self.config.holdout_subj_ids is not None:
+            held = np.asarray(self.config.holdout_subj_ids, dtype=np.int64)
+            held_mask = np.isin(group_idx, held)
+            m = m.copy()
+            m[held_mask] = 0.0
+            print(f"  [holdout] {len(held)} subjects masked from fit "
+                  f"({held_mask.sum()} of {len(m)} obs)")
+
         if self.config.inference == "svi":
             self._fit_svi(X, y, m, group_idx, n_groups)
             return
@@ -174,6 +203,9 @@ class XuGLMMBayesian(BenchmarkMethod):
             rng_key,
             X=jnp.asarray(X), y=jnp.asarray(y), mask=jnp.asarray(m),
             group_idx=jnp.asarray(group_idx), n_groups=n_groups,
+            sigma_b_prior=self.config.sigma_b_prior,
+            record_loglik=self.config.record_loglik,
+            extra_fields=("diverging",),
         )
         # Posterior samples (chain-flattened) for downstream MC
         samples_flat = mcmc.get_samples()
@@ -181,20 +213,42 @@ class XuGLMMBayesian(BenchmarkMethod):
             "beta": np.asarray(samples_flat["beta"]),     # (S, p)
             "sigma_b": np.asarray(samples_flat["sigma_b"]),  # (S,)
         }
-        # Convergence diagnostics need chain dim — get_samples(group_by_chain=True)
+        if "log_lik" in samples_flat:
+            self._log_lik = np.asarray(samples_flat["log_lik"])
+        # Convergence diagnostics — global summary across all params
         from numpyro.diagnostics import summary
+        diag_summary: dict = {}
+        r_hat_sigma, n_eff_sigma = float("nan"), float("nan")
         try:
             samples_chains = mcmc.get_samples(group_by_chain=True)
             diag = summary(samples_chains, prob=0.95)
+            rhat_all, ess_all = [], []
+            for k, v in diag.items():
+                rhat_all.extend(np.asarray(v.get("r_hat", [])).ravel().tolist())
+                ess_all.extend(np.asarray(v.get("n_eff", [])).ravel().tolist())
+            diag_summary["r_hat_max"] = float(np.nanmax(rhat_all)) if rhat_all else float("nan")
+            diag_summary["ess_min"] = float(np.nanmin(ess_all)) if ess_all else float("nan")
+            diag_summary["ess_median"] = float(np.nanmedian(ess_all)) if ess_all else float("nan")
+            diag_summary["n_params_with_rhat"] = len(rhat_all)
             sig_diag = diag.get("sigma_b", {})
-            r_hat = float(sig_diag.get("r_hat", float("nan")))
-            n_eff = float(sig_diag.get("n_eff", float("nan")))
+            r_hat_sigma = float(np.asarray(sig_diag.get("r_hat", float("nan"))))
+            n_eff_sigma = float(np.asarray(sig_diag.get("n_eff", float("nan"))))
+        except Exception as e:
+            diag_summary = {"error": str(e)}
+        try:
+            extra = mcmc.get_extra_fields(group_by_chain=False)
+            div_count = int(np.asarray(extra.get("diverging", [0])).sum()) if extra else 0
+            diag_summary["divergent_count"] = div_count
         except Exception:
-            r_hat, n_eff = float("nan"), float("nan")
+            diag_summary["divergent_count"] = -1
+        self._diagnostics = diag_summary
         print(
             f"  [Xu Bayesian fit] sigma_b posterior mean = "
             f"{self._posterior['sigma_b'].mean():.4f}, "
-            f"R-hat = {r_hat:.3f}, ESS = {n_eff:.0f}"
+            f"R-hat (sigma_b) = {r_hat_sigma:.3f}, "
+            f"R-hat global max = {diag_summary.get('r_hat_max', float('nan')):.3f}, "
+            f"ESS min = {diag_summary.get('ess_min', float('nan')):.0f}, "
+            f"divergent = {diag_summary.get('divergent_count', -1)}"
         )
 
     # ------------------------------------------------------------------
