@@ -75,18 +75,21 @@ def fig3_dose_response(args):
         ax.xaxis.set_minor_formatter(FixedFormatter(["", "", "", "", "", ""]))
         ax.grid(True, which="both", alpha=0.3)
     ax1.set_ylabel("28-day cumulative incidence (%)")
-    ax1.legend(fontsize=9, loc="upper left")
-    ax2.legend(fontsize=9, loc="upper left")
-    # Panel labels (top-left of each axes), no descriptive title
+    ax1.legend(fontsize=9, loc="upper left", framealpha=0.92)
+    ax2.legend(fontsize=9, loc="upper left", framealpha=0.92)
+    # Panel labels OUTSIDE the axes (above, top-left) to avoid overlap with legend
     for ax, label in [(ax1, "(A)"), (ax2, "(B)")]:
-        ax.text(0.02, 0.97, label, transform=ax.transAxes,
-                fontsize=12, fontweight="bold",
-                va="top", ha="left")
-    # Costa annotation on right panel only
-    ax2.annotate("Costa 2021 cutoff (~17 J/min)",
-                 xy=(17, 0.85*ax2.get_ylim()[1]),
-                 xytext=(4.5, 0.85*ax2.get_ylim()[1]), fontsize=9,
-                 arrowprops=dict(arrowstyle="->", lw=0.8))
+        ax.text(-0.02, 1.04, label, transform=ax.transAxes,
+                fontsize=13, fontweight="bold",
+                va="bottom", ha="left")
+    # Costa cutoff: simple text label above the dashed line, no arrow
+    for ax in (ax1, ax2):
+        ymax = ax.get_ylim()[1]
+        ax.text(17, ymax*0.99, "Costa 2021 cutoff",
+                ha="center", va="top", fontsize=8.5, color="#444444",
+                rotation=90,
+                bbox=dict(boxstyle="round,pad=0.2",
+                          facecolor="white", edgecolor="none", alpha=0.85))
     plt.tight_layout()
     out = Path(args.out_dir) / "fig3_dose_response.png"
     plt.savefig(out, dpi=200, bbox_inches="tight")
