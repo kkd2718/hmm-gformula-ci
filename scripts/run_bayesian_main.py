@@ -43,7 +43,7 @@ def _save_state_xu(bench: XuGLMMBayesian, prefix: str, out_dir: Path) -> None:
         "n_groups": bench._n_groups,
     }
     if bench._log_lik is not None:
-        arr["log_lik"] = bench._log_lik
+        arr["log_lik_subject"] = bench._log_lik
     if bench._diagnostics is not None:
         # Store as array of (key, value) string pairs for npz compatibility
         items = list(bench._diagnostics.items())
@@ -79,7 +79,7 @@ def _save_state_fre(bench: FRENICEBayesianBenchmark, prefix: str, out_dir: Path)
     if bench._lambda_L is not None:
         arr["lambda_L"] = bench._lambda_L
     if bench._log_lik is not None:
-        arr["log_lik"] = bench._log_lik
+        arr["log_lik_subject"] = bench._log_lik
     if bench._diagnostics is not None:
         items = list(bench._diagnostics.items())
         arr["diagnostics_keys"] = np.array([k for k, _ in items], dtype=object)

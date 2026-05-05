@@ -117,7 +117,14 @@ def _fre_nice_model(
     logit = X_outcome @ beta + re_contrib
     log_p = mask * dist.Bernoulli(logits=logit).log_prob(y)
     if record_loglik:
-        numpyro.deterministic("log_lik", log_p)
+        # Aggregate to subject (cluster) level. Per-observation log_lik
+        # would be (S, ~500k) which OOMs the GPU; cluster-level (S, n_groups)
+        # is the appropriate scale for clustered-data WAIC anyway
+        # (Vehtari 2017 §4 — leave-one-cluster-out).
+        ll_subject = jax.ops.segment_sum(
+            log_p, group_idx, num_segments=n_groups,
+        )
+        numpyro.deterministic("log_lik_subject", ll_subject)
     numpyro.factor("loglik", log_p.sum())
 
 
@@ -333,9 +340,9 @@ class FRENICEBayesianBenchmark(BenchmarkMethod):
         # Extract posterior mean of subject-level FRE for Spec ② refit
         if "b" in samples_flat:
             self._b_hat = np.asarray(samples_flat["b"]).mean(axis=0)  # (n_groups, K_re)
-        # Per-observation log_lik samples (S, N_obs) for WAIC/PSIS-LOO
-        if "log_lik" in samples_flat:
-            self._log_lik = np.asarray(samples_flat["log_lik"])
+        # Per-subject log_lik samples (S, n_groups) for cluster-level WAIC/PSIS-LOO
+        if "log_lik_subject" in samples_flat:
+            self._log_lik = np.asarray(samples_flat["log_lik_subject"])
 
         # ----- Spec ②: refit L equations with shared RE on L -----
         if self.config.share_RE_on_L and self._b_hat is not None:

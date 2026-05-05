@@ -84,7 +84,10 @@ def _xu_bayesian_model(
     # Mask non-at-risk observations from likelihood
     log_p = mask * dist.Bernoulli(logits=logit).log_prob(y)
     if record_loglik:
-        numpyro.deterministic("log_lik", log_p)
+        ll_subject = jax.ops.segment_sum(
+            log_p, group_idx, num_segments=n_groups,
+        )
+        numpyro.deterministic("log_lik_subject", ll_subject)
     numpyro.factor("loglik", log_p.sum())
 
 
@@ -213,8 +216,8 @@ class XuGLMMBayesian(BenchmarkMethod):
             "beta": np.asarray(samples_flat["beta"]),     # (S, p)
             "sigma_b": np.asarray(samples_flat["sigma_b"]),  # (S,)
         }
-        if "log_lik" in samples_flat:
-            self._log_lik = np.asarray(samples_flat["log_lik"])
+        if "log_lik_subject" in samples_flat:
+            self._log_lik = np.asarray(samples_flat["log_lik_subject"])
         # Convergence diagnostics — global summary across all params
         from numpyro.diagnostics import summary
         diag_summary: dict = {}

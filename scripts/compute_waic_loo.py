@@ -119,10 +119,16 @@ def main():
     raw = {}
     for path, label in zip(args.state_files, args.labels):
         z = np.load(path, allow_pickle=True)
-        if "log_lik" not in z.files:
+        # Prefer cluster-level (per-subject) log_lik; fall back to per-obs.
+        ll_key = (
+            "log_lik_subject" if "log_lik_subject" in z.files
+            else ("log_lik" if "log_lik" in z.files else None)
+        )
+        if ll_key is None:
             print(f"[skip] {label}: no log_lik in {path}")
             continue
-        ll = z["log_lik"]
+        ll = z[ll_key]
+        print(f"  using key '{ll_key}' shape={ll.shape}")
         # Filter zero log_lik (mask=0 rows, where Bernoulli * 0 = 0)
         nonzero = ~(np.abs(ll).sum(axis=0) == 0)
         ll_active = ll[:, nonzero]

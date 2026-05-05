@@ -82,39 +82,42 @@ def main():
     Nh = X_h.shape[0]
 
     # PPC: draw new b_i for each held-out subject (since they were excluded
-    # from fit, posterior of their b is the prior conditional on Sigma_b)
+    # from fit, their b ~ N(0, Sigma_b) under the prior conditional on the
+    # posterior of Sigma_b). For each posterior draw, average cumulative
+    # incidence over n_b_draws fresh b draws.
     rng_b = np.random.default_rng(args.seed + 1)
     K_re = L_chol.shape[-1]
-    # Per (S, Nh) draw b_i ~ N(0, L_chol L_chol^T) — Nh subjects sharing same posterior s
-    # Use n_b_draws per posterior, average over them
-    pred_y_subj = np.zeros((S, Nh, T))    # P(Y_t = 1 | survived to t-1)
-    pred_surv = np.zeros((S, Nh, T))      # P(survive to t) under model
+    # cum_inc_t_per_post[s, i, t] = expected cumulative incidence by day t
+    # for subject i under posterior draw s (averaged over n_b_draws of b).
+    cum_inc_t_per_post = np.zeros((S, Nh, T))
 
     for s_i in range(S):
-        b_local = beta[s_i]                                   # (p,)
+        beta_s = beta[s_i]                                    # (p,)
         Lc = L_chol[s_i]                                      # (K_re, K_re)
-        # Average over n_b_draws random b draws per held-out subject
-        cum_pred_t = np.zeros((Nh, T))
-        cum_surv = np.ones((Nh, T))
+        cum_inc_avg = np.zeros((Nh, T))
         for _ in range(args.n_b_draws):
             z = rng_b.normal(size=(Nh, K_re))
             b_subj = z @ Lc.T                                 # (Nh, K_re)
             re_t = b_subj @ B_basis.T                         # (Nh, T)
-            logit_t = X_h @ b_local + re_t                    # (Nh, T)
+            logit_t = X_h @ beta_s + re_t                     # (Nh, T)
             p_t = sigmoid(logit_t)
-            # Per-time hazard, accumulate survival
-            surv_running = np.ones(Nh)
+            # Per-time discrete-time hazard with at-risk masking
+            surv = np.ones(Nh)
+            cum_inc_local = np.zeros((Nh, T))
             for t in range(T):
-                cum_pred_t[:, t] += surv_running * p_t[:, t] * at_risk_h[:, t]
-                surv_running = surv_running * (1.0 - p_t[:, t] * at_risk_h[:, t])
-                cum_surv[:, t] = surv_running
-        cum_pred_t /= args.n_b_draws
-        cum_surv = np.cumprod(1 - cum_pred_t, axis=1)         # implied survival
-        pred_y_subj[s_i] = cum_pred_t
-        pred_surv[s_i] = cum_surv
+                p_eff = p_t[:, t] * at_risk_h[:, t]           # zero out non-at-risk
+                inc_t = surv * p_eff                          # incremental incidence at t
+                cum_inc_local[:, t] = (
+                    cum_inc_local[:, t - 1] if t > 0 else np.zeros(Nh)
+                ) + inc_t
+                surv = surv * (1.0 - p_eff)
+            cum_inc_avg += cum_inc_local
+        cum_inc_avg /= args.n_b_draws
+        cum_inc_t_per_post[s_i] = cum_inc_avg
 
-    # Day-28 mortality predicted = 1 - mean over (S, Nh) of survival at t=T-1
-    pred_d28_per_subj = 1 - pred_surv.mean(axis=0)[:, T - 1]   # (Nh,)
+    # Day-28 cumulative incidence = mean over posterior of cum_inc[:, T-1]
+    pred_d28_per_subj = cum_inc_t_per_post.mean(axis=0)[:, T - 1]   # (Nh,)
+    pred_y_subj = cum_inc_t_per_post  # (S, Nh, T) — kept name for downstream code
     actual_y28_per_subj = Y_h[:, T - 1]                        # final-day Y? Use cumulative
     # Actual day-28 mortality: any Y=1 across t=0..T-1 with at_risk
     actual_died = np.zeros(Nh, dtype=int)
@@ -131,7 +134,8 @@ def main():
     # actual: at each t, fraction of held-out subjects still at risk and not yet dead
     # Simpler: actual cumulative incidence of Y=1 by day t
     actual_cum = np.zeros(T)
-    pred_cum = pred_y_subj.cumsum(axis=2).mean(axis=(0, 1))    # (T,)
+    # pred_y_subj already holds cumulative incidence; mean over (S, Nh)
+    pred_cum = pred_y_subj.mean(axis=(0, 1))                   # (T,)
     cum_died = np.zeros(Nh)
     for t in range(T):
         cum_died = np.maximum(cum_died, Y_h[:, t] * (at_risk_h[:, t] > 0).astype(int))
