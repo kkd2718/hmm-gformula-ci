@@ -40,3 +40,5 @@ study_1_koges_simulation/results/*
 study_2_ards_mimic/results/*
 !study_2_ards_mimic/results/Figure2A_Main_Result.png
 !study_2_ards_mimic/results/Figure2B_Ablation.png
+# Large NUTS posterior states with subject-level log_lik (>100MB, regenerate via run_bayesian_main.py --record-loglik)
+results/loglik_main/*_state.npz
