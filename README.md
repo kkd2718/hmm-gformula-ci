@@ -93,11 +93,12 @@ mathematically equivalent in fitting (ΔELPD = −4.9).
 ![Subgroup forest plot of dose-response gradient](results/figures/fig4_subgroup_forest.png)
 
 All nine pre-specified strata show strong positive risk differences
-(high MP minus low MP). Subgroup cutoffs for continuous variables are
-at the cohort means: age 62.9 yr, BMI 30.6, Charlson 3.65 (rounded in
-labels). Severity, age, and Charlson co-morbidity gradients amplify
-the effect; a BMI obesity-paradox-consistent signal is observed (lower
-BMI subjects show larger absolute effect).
+(high MP minus low MP). Continuous variables are dichotomised at
+clinical reference cutoffs: age ≥ 65 yr (older adult), BMI ≥ 30
+(WHO Class I obesity, non-Asian definition), Charlson ≥ 5 (high
+comorbidity burden). Severity, age, and Charlson gradients amplify
+the effect; a BMI obesity-paradox-consistent signal is observed
+(non-obese subjects show larger absolute effect than obese).
 
 ### Sensitivity and robustness — summary
 
