@@ -50,8 +50,9 @@ posterior mean with 95% credible band.
 | **18.3** (Costa cutoff, ref) | **37.3%** (32.8–41.4) |
 | 22.6 (high) | **46.1%** (38.9–52.4) |
 
-Full details in
-[`_draft/manuscript/00_results_interpretation.md`](_draft/manuscript/00_results_interpretation.md).
+Full per-table and per-figure interpretation is documented in the
+manuscript drafts (kept private). Numeric outputs underlying every claim
+are in `results/`.
 
 ### Framework dominance and natural-course validation
 
@@ -114,9 +115,9 @@ effect than high-BMI).
   reference bin in all three methods, reported as a domain-knowledge
   sanity check rather than as a confounding signal). Lactate is the
   dominant proper time-varying confounder (Standard $+7.6$, K=1 $+9.0$,
-  K=5 $+8.6$ p.p.). Three-method concordance supports robustness; the
-  full 12 × 6 table is in
-  [`_draft/manuscript/08_table3_cross_method_loco.md`](_draft/manuscript/08_table3_cross_method_loco.md).
+  K=5 $+8.6$ p.p.). Three-method concordance supports robustness;
+  the underlying per-covariate risks are in `results/loco_K1/` and
+  `results/loco_K5/`.
 - **E-value** at the canonical low-vs-reference contrast (bin 7 vs
   bin 16): **8.71** at the point estimate and **7.23** at the
   credible-interval bound — an unmeasured confounder would need to be
@@ -195,8 +196,6 @@ $\tau \sim \mathrm{HalfCauchy}(0, 2.5)$, $\Omega \sim \mathrm{LKJ}(2)$.
 
 ```
 .
-├── _draft/                             # Manuscript drafts (not for code)
-│   └── manuscript/                     # Section-by-section + interpretation
 ├── data/                               # Cohort CSV (not committed)
 ├── legacy/                             # Earlier exploration (HMM, VEM-SSM, etc.)
 ├── results/                            # Posterior states + dose-response + tables

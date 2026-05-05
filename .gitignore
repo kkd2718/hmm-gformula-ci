@@ -42,3 +42,6 @@ study_2_ards_mimic/results/*
 !study_2_ards_mimic/results/Figure2B_Ablation.png
 # Large NUTS posterior states with subject-level log_lik (>100MB, regenerate via run_bayesian_main.py --record-loglik)
 results/loglik_main/*_state.npz
+
+# Manuscript drafts (local only, not for public repo)
+_draft/

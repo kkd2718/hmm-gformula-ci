@@ -63,20 +63,29 @@ def fig3_dose_response(args):
             ax2.plot(c, rm, "-", color=colors[label], linewidth=2.0, label="Posterior mean")
             ax2.fill_between(c, lo, hi, color=colors[label], alpha=0.25,
                              label="95% credible band")
+    from matplotlib.ticker import FixedLocator, FixedFormatter
+    xticks = [1, 3, 10, 17, 30]
     for ax in (ax1, ax2):
         ax.set_xscale("log")
         ax.axvline(17.0, color="black", linestyle="--", linewidth=0.8, alpha=0.6)
-        ax.set_xlabel("Mechanical power (J/min, log scale)")
-        ax.grid(True, alpha=0.3)
+        ax.set_xlabel("Mechanical power (J/min)")
+        ax.xaxis.set_major_locator(FixedLocator(xticks))
+        ax.xaxis.set_major_formatter(FixedFormatter([str(t) for t in xticks]))
+        ax.xaxis.set_minor_locator(FixedLocator([0.5, 0.7, 2, 5, 7, 20]))
+        ax.xaxis.set_minor_formatter(FixedFormatter(["", "", "", "", "", ""]))
+        ax.grid(True, which="both", alpha=0.3)
     ax1.set_ylabel("28-day cumulative incidence (%)")
-    ax1.set_title("(A) Four-method comparison")
     ax1.legend(fontsize=9, loc="upper left")
-    ax2.set_title("(B) K=5 FRE-NICE with credible band")
     ax2.legend(fontsize=9, loc="upper left")
-    # Costa annotation
+    # Panel labels (top-left of each axes), no descriptive title
+    for ax, label in [(ax1, "(A)"), (ax2, "(B)")]:
+        ax.text(0.02, 0.97, label, transform=ax.transAxes,
+                fontsize=12, fontweight="bold",
+                va="top", ha="left")
+    # Costa annotation on right panel only
     ax2.annotate("Costa 2021 cutoff (~17 J/min)",
                  xy=(17, 0.85*ax2.get_ylim()[1]),
-                 xytext=(8, 0.85*ax2.get_ylim()[1]), fontsize=9,
+                 xytext=(4.5, 0.85*ax2.get_ylim()[1]), fontsize=9,
                  arrowprops=dict(arrowstyle="->", lw=0.8))
     plt.tight_layout()
     out = Path(args.out_dir) / "fig3_dose_response.png"
@@ -100,20 +109,30 @@ def fig4_subgroup_forest(args):
              "charlson_low", "charlson_high",
              "bmi_low", "bmi_high"]
     idx = [names.index(n) for n in order if n in names]
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(8.5, 5))
     y = np.arange(len(idx))
+    label_pretty = {
+        "mild": "Mild ARDS", "moderate": "Moderate ARDS", "severe": "Severe ARDS",
+        "age_low": "Age ≤ median", "age_high": "Age > median",
+        "charlson_low": "Charlson ≤ median", "charlson_high": "Charlson > median",
+        "bmi_low": "BMI ≤ median", "bmi_high": "BMI > median",
+    }
     for i, j in enumerate(idx):
         ax.errorbar(rd[j], y[i],
                     xerr=[[rd[j] - rd_lo[j]], [rd_hi[j] - rd[j]]],
                     fmt="o", color="#D62728", capsize=3, markersize=6)
-        ax.text(rd_hi[j] + 1.5, y[i], f"N={int(ns[j])}",
-                va="center", fontsize=8, color="#555555")
+        # RD with 95% CI displayed at right edge
+        ax.text(rd_hi[j] + 2.0, y[i],
+                f"{rd[j]:+.1f} ({rd_lo[j]:+.1f}, {rd_hi[j]:+.1f})",
+                va="center", fontsize=9, color="#333333", family="monospace")
     ax.set_yticks(y)
-    ax.set_yticklabels([order[i] for i in range(len(idx))])
+    ax.set_yticklabels([label_pretty.get(order[i], order[i]) for i in range(len(idx))])
     ax.invert_yaxis()
     ax.axvline(0, color="black", linestyle="--", linewidth=0.8, alpha=0.6)
     ax.set_xlabel("Risk difference (% points): high MP − low MP")
-    ax.set_title("Fig 4. Subgroup analysis of dose-response gradient")
+    # Extend xlim to fit RD text labels on the right
+    cur_xlim = ax.get_xlim()
+    ax.set_xlim(cur_xlim[0], cur_xlim[1] + 22)
     ax.grid(True, axis="x", alpha=0.3)
     plt.tight_layout()
     out = Path(args.out_dir) / "fig4_subgroup_forest.png"
