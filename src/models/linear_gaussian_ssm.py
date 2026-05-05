@@ -31,17 +31,29 @@ from .base import BaseLatentSSM
 
 @dataclass
 class SSMConfig:
-    """Hyperparameters for LinearGaussianSSM (option A or B)."""
+    """Hyperparameters for LinearGaussianSSM (option A or B).
+
+    Identifiability constraints (post-defense revision):
+    - fix_sigma_Z: if True, sigma_Z = 1.0 is fixed (not estimated). This pins
+      the latent-state scale and removes the Z -> c*Z, beta_Z -> beta_Z/c,
+      sigma_Z -> sigma_Z/c invariance that left previous fits unidentified.
+    - init_log_sigma_Z: default raised from -2.0 (sigma=0.135) to 0.0
+      (sigma=1.0) so cold-start is not pathologically constrained.
+    - init_delta_Z_std: small random initialization (default 0.1) for delta_Z
+      replaces previous zero-init that left Z disconnected from L at start.
+    """
     n_bins: int
     n_dyn_covariates: int
     n_static_covariates: int
     z_depends_on_treatment_lag: bool = True   # True = option B; False = option A
     fit_time_effect: bool = True
     init_psi: float = 0.5
-    init_log_sigma_Z: float = -2.0
+    init_log_sigma_Z: float = 0.0             # was -2.0; now sigma_Z starts at 1.0
     init_log_sigma_L: float = -1.0
     init_beta_0: float = -3.0
     init_beta_Z: float = 0.3
+    fix_sigma_Z: bool = True                  # NEW: identifiability constraint
+    init_delta_Z_std: float = 0.1             # NEW: nonzero delta_Z init
 
 
 class LinearGaussianSSM(BaseLatentSSM):
@@ -70,7 +82,12 @@ class LinearGaussianSSM(BaseLatentSSM):
         )
         if self.gamma_V_dyn is not None:
             nn.init.normal_(self.gamma_V_dyn.weight, mean=0.0, std=0.05)
-        self.log_sigma_Z = nn.Parameter(torch.tensor([config.init_log_sigma_Z]))
+        # Identifiability: fix sigma_Z when configured. Pinning to 1.0 removes
+        # the Z-scale invariance (which previously left the model under-identified).
+        if config.fix_sigma_Z:
+            self.register_buffer("log_sigma_Z", torch.tensor([0.0]))   # sigma_Z = 1
+        else:
+            self.log_sigma_Z = nn.Parameter(torch.tensor([config.init_log_sigma_Z]))
 
         # ---------- Initial Z prior p(Z_0 | V) ----------
         self.gamma_init = (
@@ -99,10 +116,13 @@ class LinearGaussianSSM(BaseLatentSSM):
         )
         if self.delta_V is not None:
             nn.init.normal_(self.delta_V.weight, mean=0.0, std=0.05)
-        # δ_Z: scalar coefficient per L dim
+        # δ_Z: scalar coefficient per L dim. Identifiability fix: nonzero
+        # init breaks the cold-start symmetry where Z disconnects from L.
         self.delta_Z = (
             nn.Parameter(torch.zeros(p_dyn)) if p_dyn > 0 else None
         )
+        if self.delta_Z is not None and config.init_delta_Z_std > 0:
+            nn.init.normal_(self.delta_Z, mean=0.0, std=config.init_delta_Z_std)
         # Per-dim L emission noise (parameterize log to keep positive)
         self.log_sigma_L = (
             nn.Parameter(torch.full((p_dyn,), config.init_log_sigma_L))
@@ -133,6 +153,7 @@ class LinearGaussianSSM(BaseLatentSSM):
 
     @property
     def sigma_Z(self) -> Tensor:
+        # log_sigma_Z is either Parameter (free) or Buffer (fixed = 0 -> sigma=1)
         return torch.exp(self.log_sigma_Z)
 
     @property

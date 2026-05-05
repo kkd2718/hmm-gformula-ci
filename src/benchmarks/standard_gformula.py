@@ -82,9 +82,14 @@ class StandardGFormula(BenchmarkMethod):
 
     def __init__(
         self, l2: float = 1e-4, n_mc_subjects: int | None = None,
+        ref_bin: int = 16,
     ) -> None:
+        """ref_bin: index of MP bin to use as reference (column dropped from
+        treatment one-hot to avoid bias-vs-bins collinearity). Default 16
+        corresponds to ≈ 17 J/min (Costa 2021 cutoff)."""
         self.l2 = l2
         self.n_mc_subjects = n_mc_subjects
+        self.ref_bin = ref_bin
         self._beta_L: list[np.ndarray] = []
         self._sd_L: list[float] = []
         self._beta_Y: np.ndarray | None = None
@@ -97,25 +102,37 @@ class StandardGFormula(BenchmarkMethod):
         L = cohort.feature_layout
         return L["n_bins"], L["n_dyn"], L["n_static"], cohort.Y.shape[1]
 
+    def _drop_ref(self, A_onehot: np.ndarray) -> np.ndarray:
+        """Drop reference-bin column from (N, K_A) one-hot matrix.
+
+        After dropping, ref_bin is implicit (all dummies = 0). This removes
+        the bias-vs-bins collinearity (sum of one-hot = 1 = bias).
+        """
+        if self.ref_bin is None or A_onehot.shape[1] <= 1:
+            return A_onehot
+        return np.delete(A_onehot, self.ref_bin, axis=1)
+
     def _build_history_features(
         self, L_prev: np.ndarray, A_prev_onehot: np.ndarray,
         C: np.ndarray, t_idx: int, T: int,
     ) -> np.ndarray:
-        """Per-row history vector: [1, L_{t-1}, A_{t-1}, C, t/T]."""
+        """Per-row history vector: [1, L_{t-1}, A_{t-1} \\ ref, C, t/T]."""
         N = L_prev.shape[0]
         bias = np.ones((N, 1), dtype=np.float64)
         t_col = np.full((N, 1), t_idx / max(T - 1, 1), dtype=np.float64)
-        return np.concatenate([bias, L_prev, A_prev_onehot, C, t_col], axis=1)
+        A_dropped = self._drop_ref(A_prev_onehot)
+        return np.concatenate([bias, L_prev, A_dropped, C, t_col], axis=1)
 
     def _build_outcome_features(
         self, L_t: np.ndarray, A_t_onehot: np.ndarray,
         C: np.ndarray, t_idx: int, T: int,
     ) -> np.ndarray:
-        """Per-row outcome features: [1, L_t, A_t, C, t/T]."""
+        """Per-row outcome features: [1, L_t, A_t \\ ref, C, t/T]."""
         N = L_t.shape[0]
         bias = np.ones((N, 1), dtype=np.float64)
         t_col = np.full((N, 1), t_idx / max(T - 1, 1), dtype=np.float64)
-        return np.concatenate([bias, L_t, A_t_onehot, C, t_col], axis=1)
+        A_dropped = self._drop_ref(A_t_onehot)
+        return np.concatenate([bias, L_t, A_dropped, C, t_col], axis=1)
 
     def fit(self, cohort: ARDSCohort, **kwargs) -> None:
         K, p_dyn, p_stat, T = self._layout(cohort)

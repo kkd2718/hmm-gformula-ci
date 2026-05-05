@@ -13,7 +13,14 @@ from ..inference.elbo import compute_elbo, ELBOResult
 
 @dataclass
 class TrainingConfig:
-    """Hyperparameters for the ELBO-maximization loop."""
+    """Hyperparameters for the ELBO-maximization loop.
+
+    kl_warmup_epochs > 0 enables β-VAE style annealing: the KL term in the
+    ELBO is multiplied by min(1.0, epoch / kl_warmup_epochs), letting the
+    likelihood terms drive Z toward an informative posterior before the
+    prior penalty fully engages. Mitigates posterior collapse seen in earlier
+    SSM runs (long_diagnostic.png shows KL U-shape without warmup).
+    """
     n_epochs: int = 300
     learning_rate: float = 1e-2
     n_mc_samples: int = 4
@@ -22,6 +29,7 @@ class TrainingConfig:
     print_every: int = 25
     early_stop_patience: int = 50
     early_stop_tol: float = 1e-3
+    kl_warmup_epochs: int = 50               # NEW: linearly ramp KL weight 0 -> 1
 
 
 @dataclass
@@ -63,11 +71,16 @@ def train_vem(
 
     for epoch in range(config.n_epochs):
         optimizer.zero_grad()
+        if config.kl_warmup_epochs > 0:
+            kl_weight = min(1.0, (epoch + 1) / config.kl_warmup_epochs)
+        else:
+            kl_weight = 1.0
         result: ELBOResult = compute_elbo(
             model=model, posterior=posterior,
             Y=Y, A=A, L=L, V=V, at_risk=at_risk, t_norm=t_norm,
             n_samples=config.n_mc_samples,
             smoothness_lambda=config.smoothness_lambda,
+            kl_weight=kl_weight,
         )
         loss = -result.elbo
         if not torch.isfinite(loss):
