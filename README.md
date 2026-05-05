@@ -33,6 +33,15 @@ nonlinear dose-response** of mechanical power on 28-day mortality in ARDS,
 with marked acceleration above the Costa et al. (2021) clinical cutoff
 of approximately 17 J/min.
 
+![Dose-response: 4-method comparison and K=5 with credible band](results/figures/fig3_dose_response.png)
+
+*Figure 3.* Left: four-method overlay on log-MP axis. Standard NICE
+(grey, frequentist), K=1 NICE Bayesian (blue), and K=5 FRE-NICE Bayesian
+(red) cluster tightly above approximately 6 J/min; the Xu (2024) Bayesian
+GLMM (orange, observed-$L$ plug-in) is essentially flat. Dashed vertical
+line marks the Costa et al. (2021) 17 J/min clinical cutoff. Right: K=5
+posterior mean with 95% credible band.
+
 | MP exposure (J/min) | 28-day mortality (95% CrI) |
 |---|---|
 | 2.7 (low) | **8.0%** (5.5–11.4) |
@@ -41,53 +50,100 @@ of approximately 17 J/min.
 | **18.3** (Costa cutoff, ref) | **37.3%** (32.8–41.4) |
 | 22.6 (high) | **46.1%** (38.9–52.4) |
 
-Key analytical findings (full details in
-[`_draft/manuscript/00_results_interpretation.md`](_draft/manuscript/00_results_interpretation.md)):
+Full details in
+[`_draft/manuscript/00_results_interpretation.md`](_draft/manuscript/00_results_interpretation.md).
 
-- **Framework dominance.** The three NICE-family methods (Standard
-  frequentist, K=1 NICE Bayesian, K=5 FRE-NICE Bayesian) agree within
-  $\pm 5$ percentage points across the dose-response. The Xu (2024)
-  MSM-style observed-$L$ plug-in produces a flat $\sim 21\%$ across all
-  bins. The 25-percentage-point gap at high MP is the **mediated effect
-  through time-varying physiology** that the NICE forward-$L$ simulation
-  captures and the MSM observed-$L$ plug-in does not (see Discussion).
-- **Methodological preference.** WAIC and PSIS-LOO decisively prefer the
-  K=5 functional-RE specification over the K=1 scalar-RE
-  ($\Delta\mathrm{ELPD} = +641$); K=1 and Xu Bayesian are confirmed
-  mathematically equivalent in fitting ($\Delta\mathrm{ELPD} = -4.9$).
-- **Robustness.**
-  - Knot sensitivity ($K = 4, 5, 6$): $\le 0.3$ p.p. variation.
-  - Spec II ablation (shared RE on $L$): $|\lambda_j| \le 0.011$ for all
-    eight $L$ equations — Y-only RE is parsimonious and sufficient.
-  - Prior sensitivity (HalfCauchy vs Gamma on $\tau$): identical to
-    within Monte Carlo noise.
-  - Held-out 20% PPC: day-by-day calibration within $\pm 3$ p.p. across
-    the 28-day course.
-  - Natural-course validation: NICE-family miss $\le 1$ p.p.; Xu MSM
-    overshoots by 3.7 p.p. (consistent with framework attenuation).
-- **Confounder dependence.** Across 12 leave-one-covariate-out refits
-  for both K=1 and K=5, the dose-response is stable except when the
-  ARDS-defining $\mathrm{PaO_2}/\mathrm{FiO_2}$ ratio is excluded
-  ($+43$ p.p., reported as a domain-knowledge sanity check rather than
-  as a confounding signal). Lactate is the dominant proper time-varying
-  confounder ($+8.6$ p.p. on K=5 exclusion).
-- **Subgroups.** All nine pre-specified strata (severity, age, BMI,
-  Charlson) show strong positive risk differences; severe ARDS, older
-  age, and higher Charlson amplify the dose-response gradient. A BMI
-  obesity-paradox-consistent signal is observed (low-BMI subjects show
-  larger absolute effect).
-- **Unmeasured-confounding sensitivity.** E-value at the canonical
-  low-vs-reference contrast (bin 7 vs bin 16) is **8.71** at the point
-  estimate and **7.23** at the credible-interval bound, indicating that
-  an unmeasured confounder would need to be associated with both
-  exposure and outcome by approximately 7-fold to fully explain the
-  observed effect.
-- **Convergence.** Across all primary NUTS fits, $\hat R \le 1.08$,
-  effective sample size $\ge 71$, and **zero divergent transitions**.
+### Framework dominance and natural-course validation
+
+The 25-percentage-point gap between the NICE family and the Xu MSM at
+high MP is the **mediated effect through time-varying physiology** that
+the NICE forward-$L$ simulation captures and the MSM observed-$L$
+plug-in does not. Natural-course validation (predicted cohort-level
+mortality under the observed treatment trajectory; raw cohort 25.6%)
+confirms this:
+
+| Method | NC predicted | Miss vs raw 25.6% | Calibration |
+|---|---|---|---|
+| Standard NICE | 24.6% | $-1.0$ p.p. | ✓ |
+| K=1 NICE | 25.4% | $-0.2$ p.p. | ✓ |
+| **K=5 FRE-NICE** | **25.1%** | **$-0.5$ p.p.** | **✓** |
+| Xu Bayesian (MSM) | 29.3% | $+3.7$ p.p. | overshoot |
+
+The NICE-family miss is within $\pm 1$ percentage point; the Xu
+overshoot is consistent with the framework attenuation argument.
+
+### Bayesian model comparison (WAIC and PSIS-LOO)
+
+Cluster-level (per-subject) log-likelihood across the three Bayesian
+methods (Standard is frequentist and excluded). All Pareto-$\hat k \le 0.50$.
+
+| Method | WAIC | $\Delta\mathrm{ELPD}$ vs K=5 | $p_{\mathrm{waic}}$ |
+|---|---|---|---|
+| **K=5 FRE-NICE** | **34{,}404** | $0$ (favored) | 4{,}600 |
+| K=1 NICE | 35{,}686 | $-641$ | 2{,}084 |
+| Xu Bayesian | 35{,}676 | $-636$ | 2{,}097 |
+
+K=5 is decisively preferred; K=1 and Xu Bayesian are confirmed
+mathematically equivalent in fitting ($\Delta\mathrm{ELPD} = -4.9$).
+
+### Subgroup analysis
+
+![Subgroup forest plot of dose-response gradient](results/figures/fig4_subgroup_forest.png)
+
+*Figure 4.* All nine pre-specified strata show strong positive risk
+differences (high MP minus low MP). Severity, age, and Charlson
+co-morbidity gradients amplify the effect; a BMI obesity-paradox-
+consistent signal is observed (low-BMI subjects show larger absolute
+effect than high-BMI).
+
+### Sensitivity and robustness — summary
+
+- **Knot sensitivity** ($K = 4, 5, 6$): dose-response stable within
+  $\pm 0.3$ p.p.
+- **Spec II ablation** (shared RE on $L$): $|\lambda_j| \le 0.011$ for
+  all eight $L$ equations — Y-only RE is parsimonious and sufficient.
+- **Prior sensitivity** (HalfCauchy(0, 2.5) vs Gamma(2, 0.5) on $\tau$):
+  identical to within Monte Carlo noise.
+- **Held-out 20% PPC**: day-by-day calibration within $\pm 3$ p.p.
+  across the 28-day course (day-28 miss $-2.6$ p.p., predicted 19.5%
+  vs observed 22.0%).
+- **Leave-one-covariate-out (LOCO) on 12 covariates × 3 methods**: the
+  dose-response is stable across all proper confounder exclusions.
+  $\mathrm{PaO_2}/\mathrm{FiO_2}$ ratio (the ARDS-defining variable)
+  is the only exclusion producing a large shift ($+43$ p.p. at the
+  reference bin in all three methods, reported as a domain-knowledge
+  sanity check rather than as a confounding signal). Lactate is the
+  dominant proper time-varying confounder (Standard $+7.6$, K=1 $+9.0$,
+  K=5 $+8.6$ p.p.). Three-method concordance supports robustness; the
+  full 12 × 6 table is in
+  [`_draft/manuscript/08_table3_cross_method_loco.md`](_draft/manuscript/08_table3_cross_method_loco.md).
+- **E-value** at the canonical low-vs-reference contrast (bin 7 vs
+  bin 16): **8.71** at the point estimate and **7.23** at the
+  credible-interval bound — an unmeasured confounder would need to be
+  associated with both exposure and outcome by approximately 7-fold to
+  fully explain the observed effect.
+- **Convergence diagnostics**: across all primary NUTS fits,
+  $\hat R \le 1.08$, ESS $\ge 71$, and **zero divergent transitions**.
 
 ---
 
 ## Methodological highlights
+
+### Terminology
+
+- **NICE g-formula** = **N**on-**I**terative **C**onditional **E**xpectation
+  algorithm (Bang & Robins 2005; Wen, Hernán & Robins 2021). The Monte-Carlo
+  implementation of Robins's (1986) parametric g-formula: rather than
+  recursively integrating nested conditional expectations in closed form,
+  one *forward-simulates* covariate trajectories under the counterfactual
+  treatment regime and averages the resulting outcome predictions across
+  the simulated cohort. This is the framework used by methods 1, 3, and 4
+  in the ladder below; the Xu (2024) GLMM g-computation (method 2) is
+  *MSM-style* in that it plugs in observed (rather than simulated) $L$
+  values when computing the counterfactual.
+- **FRE** = **F**unctional **R**andom **E**ffect, the time-varying
+  generalization of the scalar random intercept of Xu (2024) used in
+  methods 3 (K = 1, scalar special case) and 4 (K = 5, primary).
 
 ### Estimand and identification
 
