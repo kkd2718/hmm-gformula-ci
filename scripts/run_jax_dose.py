@@ -26,8 +26,7 @@ def main():
     parser.add_argument("--csv", required=True, type=Path)
     parser.add_argument("--state-dir", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
-    parser.add_argument("--prefix", required=True, type=str,
-                        choices=["fre_nice_K1", "fre_nice_K5"])
+    parser.add_argument("--prefix", required=True, type=str)
     parser.add_argument("--n-bins", type=int, default=20)
     parser.add_argument("--ref-bin", type=int, default=16)
     parser.add_argument("--n-posterior-subset", type=int, default=200)
