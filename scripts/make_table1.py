@@ -37,8 +37,8 @@ def main():
     df = pd.read_csv(args.csv)
 
     # First-day per stay
-    by_stay = df.sort_values(["stay_id", "icu_day"]).groupby("stay_id").first().reset_index()
-    sev = by_stay.get("severity_label", pd.Series(["unknown"] * len(by_stay)))
+    by_stay = df.sort_values(["stay_id", "day_num"]).groupby("stay_id").first().reset_index()
+    sev = by_stay.get("severity", pd.Series(["unknown"] * len(by_stay)))
     print(f"Unique stays = {len(by_stay)}")
     print("Severity distribution:")
     print(sev.value_counts())
@@ -76,11 +76,11 @@ def main():
                                           if "gcs_total" in by_stay.columns else "—"),
         ("Creatinine (day 1)", lambda m: med_iqr(by_stay.loc[m, "creatinine"])
                                             if "creatinine" in by_stay.columns else "—"),
-        ("Mechanical power (day 1)", lambda m: med_iqr(by_stay.loc[m, "mp"])
-                                                  if "mp" in by_stay.columns else "—"),
-        ("28-day mortality, N (%)",
-         lambda m: n_pct((by_stay.loc[m, "death_event"] == 1).fillna(False))
-                   if "death_event" in by_stay.columns else "—"),
+        ("Mechanical power (day 1, J/min)", lambda m: med_iqr(by_stay.loc[m, "mp_j_min"])
+                                                  if "mp_j_min" in by_stay.columns else "—"),
+        ("30-day mortality, N (%)",
+         lambda m: n_pct((by_stay.loc[m, "mortality_30d"] == 1).fillna(False))
+                   if "mortality_30d" in by_stay.columns else "—"),
     ]
     for label, fn in rows:
         cells = [fn(strata[s]) for s in ["Overall", "Mild", "Moderate", "Severe"]]
