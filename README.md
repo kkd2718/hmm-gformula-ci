@@ -15,10 +15,19 @@ with **functional random effects on the outcome hazard**.
 
 This repository implements a **Bayesian parametric g-formula** (NICE) with a
 subject-specific time-varying functional random effect (FRE) on the outcome
-hazard, parameterized via a natural cubic spline basis. The proposed method
-generalizes the scalar random intercept of Xu et al. (2024) to a finite-rank
-random function on the day grid, anchored in functional data analysis (Yao,
-Müller & Wang, 2005) and generalized additive mixed modeling (Wood, 2017).
+hazard, parameterized via a natural cubic spline basis. The functional
+random effect itself is not novel: it is mathematically equivalent to the
+**random factor smooth** of generalized additive mixed modeling (Wood
+2017, `mgcv`) and to the **functional mixed-effects** parameterization of
+Guo (2002) and Scheipl, Staicu & Greven (2015). The natural cubic spline
+basis is a fixed-basis approximation of the finite-rank random-function
+representation in functional data analysis (Yao, Müller & Wang 2005); we
+do not employ data-driven eigenfunctions or the PACE algorithm. The
+**methodological contribution of this work** is the embedding of this
+random factor smooth into the outcome layer of the NICE parametric
+g-formula, generalizing Xu et al. (2024)'s scalar random intercept and
+integrating the subject-level functional deviation by Bayesian forward
+simulation.
 
 The repository accompanies a master's thesis on the dose-response of
 mechanical power (MP, J/min) and 28-day in-hospital mortality in ARDS,
