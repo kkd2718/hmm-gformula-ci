@@ -111,11 +111,13 @@ def fig4_subgroup_forest(args):
     idx = [names.index(n) for n in order if n in names]
     fig, ax = plt.subplots(figsize=(8.5, 5))
     y = np.arange(len(idx))
+    # Subgroup cutoffs are at cohort means (z-score = 0):
+    # age = 62.9 yr, BMI = 30.6, Charlson = 3.65
     label_pretty = {
         "mild": "Mild ARDS", "moderate": "Moderate ARDS", "severe": "Severe ARDS",
-        "age_low": "Age ≤ median", "age_high": "Age > median",
-        "charlson_low": "Charlson ≤ median", "charlson_high": "Charlson > median",
-        "bmi_low": "BMI ≤ median", "bmi_high": "BMI > median",
+        "age_low": "Age ≤ 63 yr", "age_high": "Age > 63 yr",
+        "charlson_low": "Charlson ≤ 3.65", "charlson_high": "Charlson > 3.65",
+        "bmi_low": "BMI ≤ 30.6", "bmi_high": "BMI > 30.6",
     }
     for i, j in enumerate(idx):
         ax.errorbar(rd[j], y[i],

@@ -35,10 +35,10 @@ of approximately 17 J/min.
 
 ![Dose-response: 4-method comparison and K=5 with credible band](results/figures/fig3_dose_response.png)
 
-*Figure 3.* Left: four-method overlay on log-MP axis. Standard NICE
+Left: four-method overlay on log-MP axis. Standard NICE
 (grey, frequentist), K=1 NICE Bayesian (blue), and K=5 FRE-NICE Bayesian
 (red) cluster tightly above approximately 6 J/min; the Xu (2024) Bayesian
-GLMM (orange, observed-$L$ plug-in) is essentially flat. Dashed vertical
+GLMM (orange, observed-L plug-in) is essentially flat. Dashed vertical
 line marks the Costa et al. (2021) 17 J/min clinical cutoff. Right: K=5
 posterior mean with 95% credible band.
 
@@ -70,61 +70,62 @@ confirms this:
 | **K=5 FRE-NICE** | **25.1%** | **$-0.5$ p.p.** | **✓** |
 | Xu Bayesian (MSM) | 29.3% | $+3.7$ p.p. | overshoot |
 
-The NICE-family miss is within $\pm 1$ percentage point; the Xu
+The NICE-family miss is within ±1 percentage point; the Xu
 overshoot is consistent with the framework attenuation argument.
 
 ### Bayesian model comparison (WAIC and PSIS-LOO)
 
 Cluster-level (per-subject) log-likelihood across the three Bayesian
-methods (Standard is frequentist and excluded). All Pareto-$\hat k \le 0.50$.
+methods (Standard is frequentist and excluded). All Pareto-k diagnostics
+were ≤ 0.50, indicating reliable PSIS-LOO estimation.
 
-| Method | WAIC | $\Delta\mathrm{ELPD}$ vs K=5 | $p_{\mathrm{waic}}$ |
+| Method | WAIC | ΔELPD vs K=5 | p_waic |
 |---|---|---|---|
-| **K=5 FRE-NICE** | **34{,}404** | $0$ (favored) | 4{,}600 |
-| K=1 NICE | 35{,}686 | $-641$ | 2{,}084 |
-| Xu Bayesian | 35{,}676 | $-636$ | 2{,}097 |
+| **K=5 FRE-NICE** | **34,404** | 0 (favored) | 4,600 |
+| K=1 NICE | 35,686 | −641 | 2,084 |
+| Xu Bayesian | 35,676 | −636 | 2,097 |
 
 K=5 is decisively preferred; K=1 and Xu Bayesian are confirmed
-mathematically equivalent in fitting ($\Delta\mathrm{ELPD} = -4.9$).
+mathematically equivalent in fitting (ΔELPD = −4.9).
 
 ### Subgroup analysis
 
 ![Subgroup forest plot of dose-response gradient](results/figures/fig4_subgroup_forest.png)
 
-*Figure 4.* All nine pre-specified strata show strong positive risk
-differences (high MP minus low MP). Severity, age, and Charlson
-co-morbidity gradients amplify the effect; a BMI obesity-paradox-
-consistent signal is observed (low-BMI subjects show larger absolute
-effect than high-BMI).
+All nine pre-specified strata show strong positive risk differences
+(high MP minus low MP). Subgroup cutoffs for continuous variables are
+at the cohort means: age 62.9 yr, BMI 30.6, Charlson 3.65 (rounded in
+labels). Severity, age, and Charlson co-morbidity gradients amplify
+the effect; a BMI obesity-paradox-consistent signal is observed (lower
+BMI subjects show larger absolute effect).
 
 ### Sensitivity and robustness — summary
 
-- **Knot sensitivity** ($K = 4, 5, 6$): dose-response stable within
-  $\pm 0.3$ p.p.
-- **Spec II ablation** (shared RE on $L$): $|\lambda_j| \le 0.011$ for
-  all eight $L$ equations — Y-only RE is parsimonious and sufficient.
-- **Prior sensitivity** (HalfCauchy(0, 2.5) vs Gamma(2, 0.5) on $\tau$):
+- **Knot sensitivity** (K = 4, 5, 6): dose-response stable within
+  ±0.3 p.p.
+- **Spec II ablation** (shared RE on L): |λ_j| ≤ 0.011 for all eight L
+  equations — Y-only RE is parsimonious and sufficient.
+- **Prior sensitivity** (HalfCauchy(0, 2.5) vs Gamma(2, 0.5) on τ):
   identical to within Monte Carlo noise.
-- **Held-out 20% PPC**: day-by-day calibration within $\pm 3$ p.p.
-  across the 28-day course (day-28 miss $-2.6$ p.p., predicted 19.5%
-  vs observed 22.0%).
+- **Held-out 20% PPC**: day-by-day calibration within ±3 p.p. across
+  the 28-day course (day-28 miss −2.6 p.p., predicted 19.5% vs observed
+  22.0%).
 - **Leave-one-covariate-out (LOCO) on 12 covariates × 3 methods**: the
   dose-response is stable across all proper confounder exclusions.
-  $\mathrm{PaO_2}/\mathrm{FiO_2}$ ratio (the ARDS-defining variable)
-  is the only exclusion producing a large shift ($+43$ p.p. at the
-  reference bin in all three methods, reported as a domain-knowledge
-  sanity check rather than as a confounding signal). Lactate is the
-  dominant proper time-varying confounder (Standard $+7.6$, K=1 $+9.0$,
-  K=5 $+8.6$ p.p.). Three-method concordance supports robustness;
-  the underlying per-covariate risks are in `results/loco_K1/` and
-  `results/loco_K5/`.
+  PaO₂/FiO₂ ratio (the ARDS-defining variable) is the only exclusion
+  producing a large shift (+43 p.p. at the reference bin in all three
+  methods, reported as a domain-knowledge sanity check rather than as
+  a confounding signal). Lactate is the dominant proper time-varying
+  confounder (Standard +7.6, K=1 +9.0, K=5 +8.6 p.p.). Three-method
+  concordance supports robustness; the underlying per-covariate risks
+  are in `results/loco_K1/` and `results/loco_K5/`.
 - **E-value** at the canonical low-vs-reference contrast (bin 7 vs
   bin 16): **8.71** at the point estimate and **7.23** at the
   credible-interval bound — an unmeasured confounder would need to be
   associated with both exposure and outcome by approximately 7-fold to
   fully explain the observed effect.
 - **Convergence diagnostics**: across all primary NUTS fits,
-  $\hat R \le 1.08$, ESS $\ge 71$, and **zero divergent transitions**.
+  R-hat ≤ 1.08, ESS ≥ 71, and **zero divergent transitions**.
 
 ---
 
