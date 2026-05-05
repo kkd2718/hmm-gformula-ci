@@ -210,7 +210,7 @@ $\tau \sim \mathrm{HalfCauchy}(0, 2.5)$, $\Omega \sim \mathrm{LKJ}(2)$.
 │   ├── bayesian_spec2/                 #   Spec II ablation (shared RE on L)
 │   ├── subgroup/                       #   9 subgroup dose-response
 │   ├── positivity/                     #   Per-bin sample sizes
-│   ├── figures/                        #   Fig 3 + Fig 4 PNG/PDF
+│   ├── figures/                        #   Manuscript figures (PNG + PDF)
 │   ├── standard_v2/                    #   Standard frequentist NICE
 │   └── appendix_g/                     #   Standard + Xu LOCO (legacy)
 ├── scripts/                            # Active analysis scripts
@@ -231,7 +231,7 @@ $\tau \sim \mathrm{HalfCauchy}(0, 2.5)$, $\Omega \sim \mathrm{LKJ}(2)$.
 | `run_jax_dose.py` | JAX dose-response from saved posterior state |
 | `compute_waic_loo.py` | WAIC + PSIS-LOO from saved log_lik states |
 | `extract_diagnostics.py` | R-hat / ESS / divergent counts table |
-| `make_figures.py` | Fig 3 (dose-response), Fig 4 (subgroup forest) |
+| `make_figures.py` | Dose-response curves, subgroup forest plot |
 | `make_table1.py` | Table 1 baseline characteristics |
 | `make_holdout_split.py` | Subject-stratified 80/20 holdout for PPC |
 | `ppc_holdout.py` | Posterior predictive check on held-out 20% |
@@ -292,7 +292,7 @@ bash scripts/round2_chain_c.sh
   offsets).
 - **Numerics**: `jax_enable_x64` is forced on for dose-response computation
   to ensure NumPy-equivalent precision.
-- **Convergence**: across all primary NUTS fits, $\hat R \le 1.08$ and zero
+- **Convergence**: across all primary NUTS fits, R-hat ≤ 1.08 and zero
   divergent transitions.
 - **Posterior states (FRE weights)** for all primary fits and sensitivity
   analyses are saved as `results/**/*_state.npz` (32 of 35 committed; the
